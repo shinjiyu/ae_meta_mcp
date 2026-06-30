@@ -22,22 +22,25 @@ var FILE_PREFIX = "__FILE__:";
 
 /**
  * Wrap user ExtendScript so it always returns a JSON string.
- * The body is run via `new Function(...)`, so the user's final expression must
- * be `return`-ed OR be a bare expression (we auto-return single expressions by
- * letting `new Function` body decide; users should end with an expression).
+ *
+ * - `esRuntime` (JSON polyfill) is prepended because AE's ES3 engine has no
+ *   native JSON object.
+ * - User code is run via ExtendScript `eval(...)`, which RETURNS the completion
+ *   value of the last expression (unlike `new Function`). So scripts ending in
+ *   a bare expression -- e.g. `({ name: c.name })` -- serialize correctly.
  */
-function wrapEvalCode(userCode) {
+function wrapEvalCode(userCode, esRuntime) {
   var escaped = String(userCode)
     .replace(/\\/g, "\\\\")
     .replace(/"/g, '\\"')
     .replace(/\r/g, "")
     .replace(/\n/g, "\\n");
   return (
-    "(function(){ try {" +
-    '  var __fn = new Function("' +
+    (esRuntime || "") +
+    "\n(function(){ try {" +
+    '  var __r = eval("' +
     escaped +
     '");' +
-    "  var __r = __fn();" +
     "  var __json = JSON.stringify({ ok: true, result: __r });" +
     "  if (__json && __json.length > " +
     FILE_THRESHOLD +
@@ -86,6 +89,7 @@ function sendJson(res, status, obj) {
 function startServer(opts) {
   var evalScriptAsync = opts.evalScriptAsync;
   var readFileUtf8 = opts.readFileUtf8;
+  var esRuntime = opts.esRuntime || "";
   var port = opts.port || DEFAULT_PORT;
   var log = opts.log || function () {};
 
@@ -112,17 +116,18 @@ function startServer(opts) {
 
     if (req.method === "GET" && url.indexOf("/health") === 0) {
       // Best-effort AE info; bridge stays ok:true even if evalScript fails.
-      evalScriptAsync(
-        '(function(){ try { return JSON.stringify({' +
-          " aeVersion: app.version," +
+      var infoScript = wrapEvalCode(
+        "({ aeVersion: app.version," +
           " projectPath: app.project.file ? app.project.file.fsName : null," +
-          " projectName: app.project.file ? app.project.file.name : null" +
-          " }); } catch(e){ return null; } })()"
-      )
+          " projectName: app.project.file ? app.project.file.name : null })",
+        esRuntime
+      );
+      evalScriptAsync(infoScript)
         .then(function (raw) {
           var info = {};
           try {
-            info = JSON.parse(raw) || {};
+            var parsed = JSON.parse(raw);
+            info = (parsed && parsed.ok && parsed.result) || {};
           } catch (e) {
             info = {};
           }
@@ -163,7 +168,7 @@ function startServer(opts) {
           sendJson(res, 400, { ok: false, error: "Missing 'code' string" });
           return;
         }
-        var script = wrapEvalCode(parsed.code);
+        var script = wrapEvalCode(parsed.code, esRuntime);
         evalScriptAsync(script)
           .then(function (raw) {
             var resolved = resolveResult(raw);

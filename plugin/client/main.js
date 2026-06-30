@@ -61,22 +61,76 @@
 
     var path = window.require("path");
     var fs = window.require("fs");
-    var serverModule;
+
+    // Resolve the extension root robustly. CEP's __dirname is unreliable
+    // (it can point at the extension root rather than client/), so prefer the
+    // official getSystemPath(EXTENSION) and fall back to a few candidates.
+    var extRoot = null;
     try {
-      // __dirname points at client/; host is a sibling folder.
-      var hostPath = path.join(__dirname, "..", "host", "server.js");
-      serverModule = window.require(hostPath);
+      extRoot = cs.getSystemPath(SystemPath.EXTENSION);
     } catch (e) {
+      extRoot = null;
+    }
+
+    var candidates = [];
+    if (extRoot) candidates.push(path.join(extRoot, "host", "server.js"));
+    if (typeof __dirname !== "undefined" && __dirname) {
+      candidates.push(path.join(__dirname, "host", "server.js"));
+      candidates.push(path.join(__dirname, "..", "host", "server.js"));
+    }
+
+    var serverModule = null;
+    var resolvedServerPath = null;
+    var lastErr = null;
+    for (var i = 0; i < candidates.length; i++) {
+      try {
+        if (fs.existsSync(candidates[i])) {
+          serverModule = window.require(candidates[i]);
+          resolvedServerPath = candidates[i];
+          log("Loaded host: " + candidates[i]);
+          break;
+        }
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+
+    if (!serverModule) {
       setStatus("error", "Failed to load host server");
-      log("require(host/server.js) failed: " + String(e));
+      log(
+        "require(host/server.js) failed. extRoot=" +
+          extRoot +
+          " tried=" +
+          candidates.join(" | ") +
+          (lastErr ? " err=" + String(lastErr) : "")
+      );
       return;
     }
 
     var port = resolvePort();
 
+    // Load the ExtendScript runtime prelude (JSON polyfill) that sits next to
+    // server.js, so wrapped scripts can JSON.stringify their results.
+    var esRuntime = "";
+    try {
+      var hostDir = resolvedServerPath ? path.dirname(resolvedServerPath) : "";
+      var runtimePath = "";
+      if (extRoot) {
+        runtimePath = path.join(extRoot, "host", "es-runtime.jsx");
+      }
+      if ((!runtimePath || !fs.existsSync(runtimePath)) && hostDir) {
+        runtimePath = path.join(hostDir, "es-runtime.jsx");
+      }
+      esRuntime = fs.readFileSync(runtimePath, "utf8");
+      log("Loaded ES runtime: " + runtimePath);
+    } catch (e) {
+      log("WARN: es-runtime.jsx not loaded (" + String(e) + "). JSON may be unavailable in AE.");
+    }
+
     try {
       serverModule.startServer({
         evalScriptAsync: evalScriptAsync,
+        esRuntime: esRuntime,
         readFileUtf8: function (p) {
           return fs.readFileSync(p, "utf8");
         },

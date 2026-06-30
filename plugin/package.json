@@ -1,0 +1,7 @@
+{
+  "name": "ae-meta-mcp-panel",
+  "version": "0.1.0",
+  "description": "CEP panel host for ae-meta-mcp. CommonJS only; runs inside AE's Node context.",
+  "private": true,
+  "type": "commonjs"
+}

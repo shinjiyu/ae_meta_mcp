@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "ae-meta-mcp": {
+      "command": "node",
+      "args": ["D:/workspace/ae_meta_mcp/mcp/index.mjs"],
+      "env": {
+        "AE_MCP_BRIDGE": "http://127.0.0.1:11488"
+      }
+    }
+  }
+}

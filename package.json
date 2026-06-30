@@ -1,0 +1,29 @@
+{
+  "name": "ae-meta-mcp",
+  "version": "0.1.0",
+  "description": "Lightweight After Effects MCP: run ExtendScript in a running AE via ae_exec.",
+  "type": "module",
+  "main": "./mcp/index.mjs",
+  "bin": {
+    "ae-meta-mcp": "./mcp/index.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node ./mcp/index.mjs",
+    "setup:cursor": "node ./scripts/setup-cursor.mjs"
+  },
+  "keywords": [
+    "mcp",
+    "after-effects",
+    "extendscript",
+    "cep",
+    "cursor"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "zod": "^3.24.2"
+  }
+}

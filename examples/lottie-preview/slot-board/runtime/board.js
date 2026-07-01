@@ -183,7 +183,7 @@
     ctx.drawImage(img, dx, dy, dw, dh);
   }
 
-  function drawBoard(ctx, config, w, h, showDimLabels, images, selectedCell) {
+  function drawBoard(ctx, config, w, h, showDimLabels, images, selectedCell, animState) {
     var layout = config.board.layout;
     var cols = config.board.cols;
     var rows = config.board.rows;
@@ -194,6 +194,35 @@
     var rg = layout.rowGap;
     var grid = config.grid || [];
     var cellFill = config.symbols ? config.symbols.cellFill : 0.9;
+    var offsets = animState && animState.offsets ? animState.offsets : null;
+    var highlightCol =
+      animState && animState.highlightCol != null ? animState.highlightCol : null;
+    var highlightCols =
+      animState && animState.highlightCols ? animState.highlightCols : null;
+
+    function isHighlightCol(c) {
+      if (highlightCols && highlightCols.length) {
+        return highlightCols.indexOf(c) >= 0;
+      }
+      if (highlightCol != null) return highlightCol === c;
+      return false;
+    }
+
+    function cellOffset(col, row, sym) {
+      if (!offsets) return { dy: 0, alpha: 1 };
+      var key = col + "," + row;
+      var o = offsets[key];
+      if (o) {
+        return {
+          dy: o.dy != null ? o.dy : 0,
+          alpha: o.alpha != null ? o.alpha : 1,
+        };
+      }
+      if (animState && animState.enterMode && sym) {
+        return { dy: 0, alpha: 0 };
+      }
+      return { dy: 0, alpha: 1 };
+    }
 
     ctx.fillStyle = COLORS.bg;
     ctx.fillRect(0, 0, w, h);
@@ -204,18 +233,45 @@
         var x = rect.x;
         var y = rect.y;
         var sym = grid[r] ? grid[r][c] : null;
+        var off = cellOffset(c, r, sym);
 
         ctx.fillStyle = COLORS.cellFill;
         ctx.fillRect(x, y, sw, sh);
 
-        if (sym && images && images[sym]) {
-          drawSymbolInCell(ctx, images[sym], x, y, sw, sh, cellFill, scaleMulFor(config, sym));
-        } else if (sym) {
+        if (isHighlightCol(c)) {
+          ctx.fillStyle = "rgba(56, 189, 248, 0.14)";
+          ctx.fillRect(x, y, sw, sh);
+        }
+
+        if (sym && images && images[sym] && off.alpha > 0.01) {
+          ctx.save();
+          ctx.globalAlpha = off.alpha;
+          drawSymbolInCell(
+            ctx,
+            images[sym],
+            x,
+            y + off.dy,
+            sw,
+            sh,
+            cellFill,
+            scaleMulFor(config, sym)
+          );
+          ctx.restore();
+        } else if (sym && off.alpha > 0.01) {
+          ctx.save();
+          ctx.globalAlpha = off.alpha;
           ctx.fillStyle = COLORS.label;
           ctx.font = "9px ui-monospace, monospace";
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
-          ctx.fillText(sym.replace(/\.png$/i, ""), x + sw / 2, y + sh / 2);
+          ctx.fillText(sym.replace(/\.png$/i, ""), x + sw / 2, y + sh / 2 + off.dy);
+          ctx.restore();
+        } else if (!sym) {
+          ctx.fillStyle = COLORS.label;
+          ctx.font = "10px ui-monospace, monospace";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(c + 1 + "," + (r + 1), x + sw / 2, y + sh / 2);
         } else {
           ctx.fillStyle = COLORS.label;
           ctx.font = "10px ui-monospace, monospace";
@@ -419,6 +475,7 @@
     stage.style.flex = "none";
 
     var selectedCell = viewOptions ? viewOptions.selectedCell : null;
+    var animState = viewOptions ? viewOptions.animState : null;
 
     if (showRulers) {
       var topRow = document.createElement("div");
@@ -468,7 +525,8 @@
       h,
       showGuides,
       images,
-      selectedCell
+      selectedCell,
+      animState
     );
 
     if (viewOptions && viewOptions.onCellClick) {
@@ -664,6 +722,29 @@
     }
     this.config = config;
     this.render();
+  };
+
+  SlotBoardRuntime.prototype.redraw = function (animState) {
+    if (!this.canvas || !this._images) return;
+    var size = this.getSize();
+    var w = size.width;
+    var h = size.height;
+    var state =
+      animState != null
+        ? animState
+        : this.viewOptions
+          ? this.viewOptions.animState
+          : null;
+    drawBoard(
+      this.canvas.getContext("2d"),
+      this.config,
+      w,
+      h,
+      !!this.viewOptions.showGuides,
+      this._images,
+      this.viewOptions ? this.viewOptions.selectedCell : null,
+      state
+    );
   };
 
   global.SlotBoardRuntime = SlotBoardRuntime;

@@ -16,6 +16,7 @@
     "build:playable": "node ./scripts/build-playable-lottie.mjs",
     "export:optimize": "node ./scripts/optimize-lottie.mjs",
     "slot-board:editor": "node ./scripts/serve-slot-board-editor.mjs",
+    "test:slot-board-anim": "node ./scripts/test-slot-board-anim.mjs",
     "pack:effect": "node ./scripts/pack-effect-frames.mjs examples/effect"
   },
   "keywords": [

@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 5,
   "id": "cfg_example_6x5",
   "name": "6×5 盘面",
   "createdAt": "2026-07-01T00:00:00.000Z",
@@ -63,6 +63,50 @@
         ["s4.png", null, null, null, "s8.png", null],
         [null, null, null, null, null, null],
         [null, null, "s9.png", null, null, null]
+      ]
+    }
+  ],
+  "sequences": [
+    {
+      "id": "seq_0",
+      "name": "f0 → f1 第1波",
+      "steps": [
+        {
+          "id": "s1",
+          "type": "boardDropOut",
+          "fromFrameId": "f0",
+          "params": {
+            "scope": "board",
+            "cols": "all",
+            "colStagger": 0.08,
+            "colOrder": "leftFirst",
+            "fallDuration": 0.4,
+            "rowStagger": 0.1,
+            "order": "bottomFirst",
+            "extraFallPx": 48,
+            "easing": "easeInQuad",
+            "fadeOut": true,
+            "delayAfter": 0
+          }
+        },
+        {
+          "id": "s2",
+          "type": "boardDropIn",
+          "toFrameId": "f1",
+          "params": {
+            "scope": "board",
+            "cols": "all",
+            "colStagger": 0.08,
+            "colOrder": "leftFirst",
+            "fallDuration": 0.4,
+            "rowStagger": 0.1,
+            "order": "topFirst",
+            "extraRisePx": 48,
+            "easing": "easeOutQuad",
+            "fadeIn": true,
+            "delayBefore": 0
+          }
+        }
       ]
     }
   ]

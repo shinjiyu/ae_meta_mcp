@@ -1,12 +1,13 @@
 /**
- * Slot board config schema (v4).
+ * Slot board config schema (v5).
  * 布局：board.layout → computeBoardSize()
  * 盘面：frames[] 多帧 grid，activeFrameId 为当前编辑/预览帧
+ * 动画：sequences[] 帧间链路实例（Exit + Enter 两步），每帧至多一个起点/终点
  */
 (function (global) {
   "use strict";
 
-  var CONFIG_VERSION = 4;
+  var CONFIG_VERSION = 5;
   var DEFAULT_COMP = { w: 720, h: 1280 };
   var DEFAULT_LAYOUT = {
     symbolW: 84,
@@ -33,6 +34,10 @@
   var MAX_COLS = 12;
   var MAX_ROWS = 12;
   var MAX_FRAMES = 32;
+  var MAX_SEQUENCES = 16;
+  var MAX_STEPS = 8;
+
+  var VALID_STEP_TYPES = ["boardDropOut", "boardDropIn"];
 
   function deepClone(obj) {
     return JSON.parse(JSON.stringify(obj));
@@ -40,6 +45,24 @@
 
   function newConfigId() {
     return "cfg_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+  }
+
+  function newSequenceId(sequences) {
+    var max = -1;
+    (sequences || []).forEach(function (s) {
+      var m = /^seq_(\d+)$/.exec(s.id || "");
+      if (m) max = Math.max(max, Number(m[1]));
+    });
+    return "seq_" + (max + 1);
+  }
+
+  function newStepId(steps) {
+    var max = -1;
+    (steps || []).forEach(function (s) {
+      var m = /^s(\d+)$/.exec(s.id || "");
+      if (m) max = Math.max(max, Number(m[1]));
+    });
+    return "s" + (max + 1);
   }
 
   function newFrameId(frames) {
@@ -144,6 +167,7 @@
       symbols: deepClone(DEFAULT_SYMBOLS),
       frames: [{ id: "f0", name: "初始", grid: grid }],
       activeFrameId: "f0",
+      sequences: [],
       grid: deepClone(grid),
     };
   }
@@ -188,6 +212,257 @@
       cfg.activeFrameId = cfg.frames[0].id;
     }
     return cfg;
+  }
+
+  function migrateV4toV5(raw) {
+    var cfg = deepClone(raw);
+    cfg.version = CONFIG_VERSION;
+    if (!Array.isArray(cfg.sequences)) cfg.sequences = [];
+    return cfg;
+  }
+
+  function normalizeStep(step, index) {
+    if (!step || typeof step !== "object") {
+      throw new Error("无效动画 step");
+    }
+    if (VALID_STEP_TYPES.indexOf(step.type) < 0) {
+      throw new Error("不支持的动画类型: " + step.type);
+    }
+    var out = {
+      id: step.id || newStepId([]),
+      type: step.type,
+      params: step.params && typeof step.params === "object" ? deepClone(step.params) : {},
+    };
+    if (step.fromFrameId) out.fromFrameId = String(step.fromFrameId);
+    if (step.toFrameId) out.toFrameId = String(step.toFrameId);
+    if (out.type === "boardDropOut" && !out.fromFrameId) {
+      throw new Error("step " + out.id + ": boardDropOut 需要 fromFrameId");
+    }
+    if (out.type === "boardDropIn" && !out.toFrameId) {
+      throw new Error("step " + out.id + ": boardDropIn 需要 toFrameId");
+    }
+    return out;
+  }
+
+  function normalizeSequences(cfg) {
+    if (!Array.isArray(cfg.sequences)) cfg.sequences = [];
+    if (cfg.sequences.length > MAX_SEQUENCES) {
+      throw new Error("序列数不能超过 " + MAX_SEQUENCES);
+    }
+    var seen = {};
+    cfg.sequences = cfg.sequences.map(function (seq, index) {
+      var id = seq.id || newSequenceId(cfg.sequences.slice(0, index));
+      if (seen[id]) id = newSequenceId(cfg.sequences);
+      seen[id] = true;
+      var name = (seq.name || "").trim() || "序列 " + id;
+      if (!Array.isArray(seq.steps) || !seq.steps.length) {
+        throw new Error("序列 " + id + " 至少需要一个 step");
+      }
+      if (seq.steps.length > MAX_STEPS) {
+        throw new Error("序列 " + id + " step 数不能超过 " + MAX_STEPS);
+      }
+      var steps = seq.steps.map(function (step, si) {
+        var s = normalizeStep(step, si);
+        if (s.fromFrameId && !getFrame(cfg, s.fromFrameId)) {
+          throw new Error("序列 " + id + " 引用未知 from 帧: " + s.fromFrameId);
+        }
+        if (s.toFrameId && !getFrame(cfg, s.toFrameId)) {
+          throw new Error("序列 " + id + " 引用未知 to 帧: " + s.toFrameId);
+        }
+        return s;
+      });
+      return { id: id, name: name, steps: steps };
+    });
+    assertFrameLinkOccupancy(cfg);
+    return cfg;
+  }
+
+  /** 从 steps 提取链路端点（Exit from / Enter to） */
+  function getSequenceEndpoints(seq) {
+    var fromFrameId = null;
+    var toFrameId = null;
+    if (!seq || !Array.isArray(seq.steps)) {
+      return { fromFrameId: null, toFrameId: null };
+    }
+    for (var i = 0; i < seq.steps.length; i++) {
+      var step = seq.steps[i];
+      if (step.fromFrameId) fromFrameId = step.fromFrameId;
+      if (step.toFrameId) toFrameId = step.toFrameId;
+    }
+    return { fromFrameId: fromFrameId, toFrameId: toFrameId };
+  }
+
+  function findSequenceByFromFrame(config, frameId, excludeSequenceId) {
+    var list = config.sequences || [];
+    for (var i = 0; i < list.length; i++) {
+      var seq = list[i];
+      if (excludeSequenceId && seq.id === excludeSequenceId) continue;
+      if (getSequenceEndpoints(seq).fromFrameId === frameId) return seq;
+    }
+    return null;
+  }
+
+  function findSequenceByToFrame(config, frameId, excludeSequenceId) {
+    var list = config.sequences || [];
+    for (var i = 0; i < list.length; i++) {
+      var seq = list[i];
+      if (excludeSequenceId && seq.id === excludeSequenceId) continue;
+      if (getSequenceEndpoints(seq).toFrameId === frameId) return seq;
+    }
+    return null;
+  }
+
+  function assertFrameLinkOccupancy(cfg) {
+    var fromMap = {};
+    var toMap = {};
+    (cfg.sequences || []).forEach(function (seq) {
+      var ends = getSequenceEndpoints(seq);
+      if (!ends.fromFrameId || !ends.toFrameId) {
+        throw new Error("序列 " + seq.id + " 须同时包含 Exit(from) 与 Enter(to) 帧");
+      }
+      if (ends.fromFrameId === ends.toFrameId) {
+        throw new Error("序列 " + seq.id + " 的 from / to 帧不能相同");
+      }
+      if (fromMap[ends.fromFrameId]) {
+        throw new Error(
+          "帧 " + ends.fromFrameId + " 已被 " + fromMap[ends.fromFrameId] + " 作为起点占用"
+        );
+      }
+      fromMap[ends.fromFrameId] = seq.id;
+      if (toMap[ends.toFrameId]) {
+        throw new Error("帧 " + ends.toFrameId + " 已被 " + toMap[ends.toFrameId] + " 作为终点占用");
+      }
+      toMap[ends.toFrameId] = seq.id;
+    });
+  }
+
+  /** 从起始帧沿 from→to 链路向下追踪 */
+  function buildChainFromFrame(config, startFrameId) {
+    var chain = [];
+    if (!startFrameId || !getFrame(config, startFrameId)) return chain;
+    var current = startFrameId;
+    var guard = 0;
+    while (current && guard <= MAX_SEQUENCES) {
+      guard++;
+      var seq = findSequenceByFromFrame(config, current);
+      if (!seq) break;
+      chain.push(seq);
+      current = getSequenceEndpoints(seq).toFrameId;
+    }
+    return chain;
+  }
+
+  /** 建议新建实例可用的 from / to 帧对 */
+  function suggestNextLinkFrames(config, excludeSequenceId) {
+    var frames = config.frames || [];
+    for (var i = 0; i < frames.length; i++) {
+      var fromId = frames[i].id;
+      if (findSequenceByFromFrame(config, fromId, excludeSequenceId)) continue;
+      for (var j = 0; j < frames.length; j++) {
+        if (i === j) continue;
+        var toId = frames[j].id;
+        if (findSequenceByToFrame(config, toId, excludeSequenceId)) continue;
+        return { fromFrameId: fromId, toFrameId: toId };
+      }
+    }
+    return null;
+  }
+
+  function formatLinkLabel(config, seq) {
+    var ends = getSequenceEndpoints(seq);
+    var from = getFrame(config, ends.fromFrameId);
+    var to = getFrame(config, ends.toFrameId);
+    var fromLabel = from ? from.id + " · " + from.name : ends.fromFrameId || "?";
+    var toLabel = to ? to.id + " · " + to.name : ends.toFrameId || "?";
+    return fromLabel + " → " + toLabel;
+  }
+
+  function getSequence(config, sequenceId) {
+    if (!config.sequences) return null;
+    for (var i = 0; i < config.sequences.length; i++) {
+      if (config.sequences[i].id === sequenceId) return config.sequences[i];
+    }
+    return null;
+  }
+
+  function upsertSequence(config, sequence) {
+    var cfg = deepClone(config);
+    if (!Array.isArray(cfg.sequences)) cfg.sequences = [];
+    var idx = -1;
+    for (var i = 0; i < cfg.sequences.length; i++) {
+      if (cfg.sequences[i].id === sequence.id) {
+        idx = i;
+        break;
+      }
+    }
+    var payload = {
+      id: sequence.id || newSequenceId(cfg.sequences),
+      name: (sequence.name || "").trim() || "新序列",
+      steps: sequence.steps,
+    };
+    if (idx >= 0) cfg.sequences[idx] = payload;
+    else {
+      if (cfg.sequences.length >= MAX_SEQUENCES) {
+        throw new Error("序列数不能超过 " + MAX_SEQUENCES);
+      }
+      cfg.sequences.push(payload);
+    }
+    normalizeSequences(cfg);
+    return cfg;
+  }
+
+  function deleteSequence(config, sequenceId) {
+    var cfg = deepClone(config);
+    cfg.sequences = (cfg.sequences || []).filter(function (s) {
+      return s.id !== sequenceId;
+    });
+    return cfg;
+  }
+
+  function createDefaultWaveSequence(fromFrameId, toFrameId, enterType) {
+    enterType = enterType || "boardDropIn";
+    return {
+      id: newSequenceId([]),
+      name: fromFrameId + " → " + toFrameId,
+      steps: [
+        {
+          id: "s1",
+          type: "boardDropOut",
+          fromFrameId: fromFrameId,
+          params: {
+            scope: "board",
+            cols: "all",
+            colStagger: 0.08,
+            colOrder: "leftFirst",
+            fallDuration: 0.4,
+            rowStagger: 0.1,
+            order: "bottomFirst",
+            extraFallPx: 48,
+            easing: "easeInQuad",
+            fadeOut: true,
+            delayAfter: 0,
+          },
+        },
+        {
+          id: "s2",
+          type: enterType,
+          toFrameId: toFrameId,
+          params: {
+            scope: "board",
+            cols: "all",
+            colStagger: 0.08,
+            colOrder: "leftFirst",
+            fallDuration: 0.4,
+            rowStagger: 0.1,
+            order: "topFirst",
+            extraRisePx: 48,
+            easing: "easeOutQuad",
+            fadeIn: true,
+            delayBefore: 0,
+          },
+        },
+      ],
+    };
   }
 
   function migrateV3toV4(raw) {
@@ -401,12 +676,14 @@
 
     var cfg;
     if (raw.version === 3) {
-      cfg = migrateV3toV4(raw);
+      cfg = migrateV4toV5(migrateV3toV4(raw));
+    } else if (raw.version === 4) {
+      cfg = migrateV4toV5(raw);
     } else if (raw.version === CONFIG_VERSION) {
       cfg = deepClone(raw);
     } else {
       throw new Error(
-        "不支持的配置版本: " + raw.version + "（需要 " + CONFIG_VERSION + " 或 3）"
+        "不支持的配置版本: " + raw.version + "（需要 " + CONFIG_VERSION + "、4 或 3）"
       );
     }
 
@@ -420,6 +697,7 @@
     cfg.board.layout = normalizeLayout(cfg.board.layout);
     cfg.symbols = normalizeSymbols(cfg.symbols);
     normalizeFrames(cfg);
+    normalizeSequences(cfg);
     syncDerivedGrid(cfg);
     return cfg;
   }
@@ -451,6 +729,8 @@
     MAX_COLS: MAX_COLS,
     MAX_ROWS: MAX_ROWS,
     MAX_FRAMES: MAX_FRAMES,
+    MAX_SEQUENCES: MAX_SEQUENCES,
+    VALID_STEP_TYPES: VALID_STEP_TYPES,
     createConfig: createConfig,
     normalizeConfig: normalizeConfig,
     computeBoardSize: computeBoardSize,
@@ -471,5 +751,16 @@
     deleteFrame: deleteFrame,
     moveFrame: moveFrame,
     symbolUsedInAnyFrame: symbolUsedInAnyFrame,
+    getSequence: getSequence,
+    upsertSequence: upsertSequence,
+    deleteSequence: deleteSequence,
+    createDefaultWaveSequence: createDefaultWaveSequence,
+    normalizeSequences: normalizeSequences,
+    getSequenceEndpoints: getSequenceEndpoints,
+    findSequenceByFromFrame: findSequenceByFromFrame,
+    findSequenceByToFrame: findSequenceByToFrame,
+    buildChainFromFrame: buildChainFromFrame,
+    suggestNextLinkFrames: suggestNextLinkFrames,
+    formatLinkLabel: formatLinkLabel,
   };
 })(typeof window !== "undefined" ? window : globalThis);

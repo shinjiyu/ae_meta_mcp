@@ -1,0 +1,69 @@
+{
+  "version": 4,
+  "id": "cfg_example_6x5",
+  "name": "6×5 盘面",
+  "createdAt": "2026-07-01T00:00:00.000Z",
+  "comp": { "w": 720, "h": 1280 },
+  "board": {
+    "cols": 6,
+    "rows": 5,
+    "locked": true,
+    "layout": {
+      "symbolW": 84,
+      "symbolH": 64,
+      "colGap": 0,
+      "rowGap": 0,
+      "padding": 0
+    }
+  },
+  "symbols": {
+    "cellFill": 0.9,
+    "scaleMul": {
+      "s1.png": 1,
+      "s2.png": 1,
+      "s3.png": 1,
+      "s4.png": 1,
+      "s5_.png": 1.48,
+      "s6_.png": 1.48,
+      "s7.png": 1.45,
+      "s8.png": 1.58,
+      "s9.png": 1.58
+    }
+  },
+  "activeFrameId": "f0",
+  "frames": [
+    {
+      "id": "f0",
+      "name": "初始",
+      "grid": [
+        ["s1.png", "s2.png", "s3.png", "s4.png", "s5_.png", "s6_.png"],
+        ["s7.png", "s8.png", "s9.png", "s1.png", "s2.png", "s3.png"],
+        ["s4.png", "s5_.png", "s6_.png", "s7.png", "s8.png", "s9.png"],
+        ["s2.png", "s4.png", "s6_.png", "s8.png", "s1.png", "s3.png"],
+        ["s5_.png", "s7.png", "s9.png", "s2.png", "s4.png", "s6_.png"]
+      ]
+    },
+    {
+      "id": "f1",
+      "name": "第1波消除后",
+      "grid": [
+        [null, "s2.png", "s3.png", null, "s5_.png", "s6_.png"],
+        ["s7.png", null, "s9.png", "s1.png", null, "s3.png"],
+        ["s4.png", "s5_.png", null, "s7.png", "s8.png", null],
+        [null, "s4.png", "s6_.png", "s8.png", null, "s3.png"],
+        ["s5_.png", null, "s9.png", "s2.png", "s4.png", null]
+      ]
+    },
+    {
+      "id": "f2",
+      "name": "第2波消除后",
+      "grid": [
+        [null, null, "s3.png", null, null, "s6_.png"],
+        [null, null, null, "s1.png", null, null],
+        ["s4.png", null, null, null, "s8.png", null],
+        [null, null, null, null, null, null],
+        [null, null, "s9.png", null, null, null]
+      ]
+    }
+  ]
+}

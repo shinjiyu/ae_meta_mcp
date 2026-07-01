@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>合成 1 · Lottie 预览</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        padding: 24px;
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        background: radial-gradient(circle at top, #1f2937 0%, #0b0f17 55%, #05070b 100%);
+        color: #e5e7eb;
+      }
+
+      h1 {
+        font-size: 1rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+
+      .meta {
+        font-size: 0.85rem;
+        color: #9ca3af;
+        text-align: center;
+        line-height: 1.5;
+      }
+
+      .stage {
+        width: min(360px, 92vw);
+        aspect-ratio: 720 / 1280;
+        border-radius: 16px;
+        overflow: hidden;
+        background: #111827;
+        box-shadow:
+          0 24px 60px rgba(0, 0, 0, 0.45),
+          inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+      }
+
+      #lottie {
+        width: 100%;
+        height: 100%;
+      }
+
+      .controls {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+
+      button {
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.06);
+        color: inherit;
+        padding: 8px 14px;
+        border-radius: 999px;
+        cursor: pointer;
+        font-size: 0.85rem;
+      }
+
+      button:hover {
+        background: rgba(255, 255, 255, 0.12);
+      }
+
+      .status {
+        min-height: 1.2em;
+        font-size: 0.8rem;
+        color: #fbbf24;
+      }
+
+      .status.error {
+        color: #f87171;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>合成 1 · Lottie 预览</h1>
+    <p class="meta">
+      720×1280 · 30fps · 1s loop<br />
+      来源：Bodymovin 导出（含占位符 upper_body）
+    </p>
+
+    <div class="stage">
+      <div id="lottie"></div>
+    </div>
+
+    <div class="controls">
+      <button type="button" id="btn-play">播放</button>
+      <button type="button" id="btn-pause">暂停</button>
+      <button type="button" id="btn-restart">重播</button>
+    </div>
+
+    <p class="status" id="status">加载中…</p>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie.min.js"></script>
+    <script>
+      (function () {
+        var container = document.getElementById("lottie");
+        var statusEl = document.getElementById("status");
+
+        function setStatus(text, isError) {
+          statusEl.textContent = text;
+          statusEl.className = "status" + (isError ? " error" : "");
+        }
+
+        var anim = lottie.loadAnimation({
+          container: container,
+          renderer: "svg",
+          loop: true,
+          autoplay: true,
+          path: "./comp_1.json"
+        });
+
+        anim.addEventListener("DOMLoaded", function () {
+          setStatus("已加载 · 循环播放中");
+        });
+
+        anim.addEventListener("data_failed", function () {
+          setStatus("加载失败：请用本地 HTTP 服务打开此页（见 README）", true);
+        });
+
+        document.getElementById("btn-play").addEventListener("click", function () {
+          anim.play();
+        });
+
+        document.getElementById("btn-pause").addEventListener("click", function () {
+          anim.pause();
+        });
+
+        document.getElementById("btn-restart").addEventListener("click", function () {
+          anim.stop();
+          anim.goToAndPlay(0, true);
+        });
+      })();
+    </script>
+  </body>
+</html>

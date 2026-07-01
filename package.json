@@ -12,7 +12,11 @@
   },
   "scripts": {
     "start": "node ./mcp/index.mjs",
-    "setup:cursor": "node ./scripts/setup-cursor.mjs"
+    "setup:cursor": "node ./scripts/setup-cursor.mjs",
+    "build:playable": "node ./scripts/build-playable-lottie.mjs",
+    "export:optimize": "node ./scripts/optimize-lottie.mjs",
+    "slot-board:editor": "node ./scripts/serve-slot-board-editor.mjs",
+    "pack:effect": "node ./scripts/pack-effect-frames.mjs examples/effect"
   },
   "keywords": [
     "mcp",
@@ -25,5 +29,8 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
     "zod": "^3.24.2"
+  },
+  "optionalDependencies": {
+    "sharp": "^0.35.2"
   }
 }

@@ -12,3 +12,16 @@ Thumbs.db
 # Temp / build
 *.tmp
 ae-meta-mcp-result.json
+
+# Playable / lottie local test assets (regenerate via npm scripts)
+examples/lottie-preview/comp_1.json
+examples/lottie-preview/playable-ad.html
+examples/lottie-preview/export-images/
+examples/lottie-preview/resize-test/
+examples/lottie-preview/js/
+
+# Effect frame tests / packed output
+examples/effect/
+
+# Local symbol PNGs (import via slot-board editor)
+examples/symbols/

@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>Slot Board Editor</title>
+  <link rel="stylesheet" href="/editor.css" />
+</head>
+<body>
+  <header class="app-header">
+    <h1>Slot Board Editor</h1>
+    <span id="mode-badge" class="badge">未打开配置</span>
+  </header>
+
+  <div class="app-body">
+    <main class="preview-pane" id="preview-pane">
+      <div class="preview-toolbar" id="preview-toolbar">
+        <label class="toggle-row">
+          <input type="checkbox" id="toggle-rulers" />
+          <span>标尺</span>
+        </label>
+        <label class="toggle-row">
+          <input type="checkbox" id="toggle-guides" />
+          <span>辅助线</span>
+        </label>
+        <label class="preview-select">
+          <span>帧</span>
+          <select id="preview-frame"></select>
+        </label>
+        <label class="preview-select">
+          <span>预览</span>
+          <select id="preview-mode">
+            <option value="comp">合成 720×1280</option>
+            <option value="board">仅盘面 1:1</option>
+          </select>
+        </label>
+        <label class="preview-select">
+          <span>缩放</span>
+          <select id="preview-zoom">
+            <option value="1">100%</option>
+            <option value="0.75">75%</option>
+            <option value="0.5">50%</option>
+            <option value="0.35">35%</option>
+            <option value="0.25">25%</option>
+          </select>
+        </label>
+      </div>
+      <div class="preview-viewport" id="preview-viewport">
+        <div id="board-host"></div>
+        <p class="preview-hint" id="preview-hint">创建或导入配置后在此预览网格</p>
+      </div>
+      <p class="preview-size hidden" id="preview-size"></p>
+    </main>
+
+    <aside class="config-pane">
+      <section id="panel-create" class="panel">
+        <h2>新建配置</h2>
+        <p class="desc">行列在创建时确定，<strong>之后不可修改</strong>。若要改尺寸请新建一份配置。</p>
+        <label>名称<input id="create-name" type="text" value="6×5 盘面" maxlength="64" /></label>
+        <div class="row2">
+          <label>列 (cols)<input id="create-cols" type="number" min="2" max="12" value="6" /></label>
+          <label>行 (rows)<input id="create-rows" type="number" min="2" max="12" value="5" /></label>
+        </div>
+        <div class="sym-import-block">
+          <p class="desc">盘面符号来自 <code>examples/symbols/</code>，可在此先导入 PNG。</p>
+          <button type="button" id="btn-import-symbols-create" class="btn">导入符号 PNG…</button>
+          <p id="sym-catalog-hint" class="muted-note">符号库：加载中…</p>
+        </div>
+        <button type="button" id="btn-create" class="btn primary">创建配置</button>
+        <input id="file-import-symbols" type="file" accept="image/png" multiple hidden />
+      </section>
+
+      <section id="panel-manage" class="panel hidden">
+        <nav class="sub-tabs" role="tablist">
+          <button type="button" class="sub-tab active" data-tab="basic" role="tab">基础</button>
+          <button type="button" class="sub-tab" data-tab="layout" role="tab">布局</button>
+          <button type="button" class="sub-tab" data-tab="frames" role="tab">帧</button>
+          <button type="button" class="sub-tab" data-tab="board" role="tab">盘面</button>
+          <button type="button" class="sub-tab" data-tab="symlib" role="tab">符号库</button>
+          <button type="button" class="sub-tab" data-tab="file" role="tab">文件</button>
+        </nav>
+
+        <div id="tab-basic" class="tab-panel" role="tabpanel">
+          <label>名称<input id="edit-name" type="text" maxlength="64" /></label>
+          <dl class="meta">
+            <dt>ID</dt><dd id="meta-id" class="mono"></dd>
+            <dt>创建</dt><dd id="meta-created"></dd>
+            <dt>行列</dt>
+            <dd id="meta-dims" class="locked">
+              <span id="meta-dims-val"></span>
+              <span class="lock-tag" title="创建后不可改">已锁定</span>
+            </dd>
+            <dt>盘面尺寸</dt>
+            <dd id="meta-board-size" class="muted-note"></dd>
+          </dl>
+        </div>
+
+        <div id="tab-layout" class="tab-panel hidden" role="tabpanel">
+          <p class="desc">盘面尺寸由 symbol 宽高 + 间距 + 内边距计算，这是<strong>唯一真实源</strong>。AE / playable 按此手动对齐。</p>
+          <div class="row2">
+            <label>Symbol 宽 (px)<input id="layout-symbol-w" type="number" min="1" max="512" step="1" /></label>
+            <label>Symbol 高 (px)<input id="layout-symbol-h" type="number" min="1" max="512" step="1" /></label>
+            <label>列距 (px)<input id="layout-col-gap" type="number" min="0" max="128" step="1" /></label>
+            <label>行距 (px)<input id="layout-row-gap" type="number" min="0" max="128" step="1" /></label>
+            <label>内边距 (px)<input id="layout-padding" type="number" min="0" max="128" step="1" /></label>
+          </div>
+          <div class="calc-box">
+            <div class="calc-title">计算结果</div>
+            <div id="layout-calc" class="calc-body"></div>
+          </div>
+        </div>
+
+        <div id="tab-frames" class="tab-panel hidden" role="tabpanel">
+          <p class="desc">多帧盘面用于动画过渡（如初始 → 消除后）。每帧独立 grid，布局与符号库共享。</p>
+          <div id="frame-list" class="frame-list"></div>
+          <div class="btn-row frame-actions">
+            <button type="button" id="btn-frame-add" class="btn primary">新建空帧</button>
+            <button type="button" id="btn-frame-dup" class="btn">复制当前帧</button>
+          </div>
+        </div>
+
+        <div id="tab-board" class="tab-panel hidden" role="tabpanel">
+          <p class="desc">编辑当前帧 <strong id="board-frame-label">—</strong>。点击预览格子填入笔刷；<kbd>Alt</kbd>+点击清空。</p>
+          <label>cellFill (0–1)<input id="sym-cell-fill" type="number" min="0.01" max="1" step="0.01" /></label>
+          <div class="sym-section">
+            <div class="sym-section-title">笔刷</div>
+            <div id="symbol-palette" class="symbol-palette"></div>
+          </div>
+          <div class="sym-section">
+            <div class="sym-section-title">scaleMul</div>
+            <div id="symbol-scale-list" class="symbol-scale-list"></div>
+          </div>
+          <dl class="meta sym-meta">
+            <dt>已填</dt><dd id="sym-grid-stats"></dd>
+            <dt>选中格</dt><dd id="sym-selected-cell" class="mono">—</dd>
+          </dl>
+          <div class="btn-row sym-actions">
+            <button type="button" id="btn-clear-cell" class="btn">清空选中格</button>
+            <button type="button" id="btn-clear-board" class="btn ghost">清空当前帧</button>
+          </div>
+        </div>
+
+        <div id="tab-symlib" class="tab-panel hidden" role="tabpanel">
+          <p class="desc">从本机导入 PNG，写入 <code>examples/symbols/</code>，供盘面笔刷与 runtime 加载。</p>
+          <div id="sym-drop-zone" class="sym-drop-zone" tabindex="0">
+            <span>拖放 PNG 到此处</span>
+            <span class="muted">或</span>
+            <button type="button" id="btn-import-symbols" class="btn primary">选择文件…</button>
+          </div>
+          <p id="sym-import-status" class="import-status hidden"></p>
+          <div class="sym-section">
+            <div class="sym-section-title">已导入 (<span id="sym-lib-count">0</span>)</div>
+            <div id="symbol-library" class="symbol-library"></div>
+          </div>
+        </div>
+
+        <div id="tab-file" class="tab-panel hidden" role="tabpanel">
+          <p class="desc">导出 JSON 供 runtime / playable 使用；导入会合并当前行列锁定的配置。</p>
+          <div class="btn-row">
+            <button type="button" id="btn-export" class="btn primary">导出 JSON</button>
+            <button type="button" id="btn-import" class="btn">导入 JSON</button>
+            <button type="button" id="btn-new" class="btn ghost">新建配置…</button>
+          </div>
+          <input id="file-import" type="file" accept="application/json" hidden />
+        </div>
+      </section>
+    </aside>
+  </div>
+
+  <script src="/runtime/config.js"></script>
+  <script src="/runtime/board.js"></script>
+  <script src="/editor.js"></script>
+</body>
+</html>

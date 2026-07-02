@@ -17,8 +17,12 @@ const EDITOR = path.join(SLOT_BOARD, "editor");
 const RUNTIME = path.join(SLOT_BOARD, "runtime");
 const CONFIGS = path.join(SLOT_BOARD, "configs");
 const SYMBOLS = path.join(EXAMPLES, "symbols");
+const EFFECTS = process.env.EFFECTS_DIR
+  ? path.resolve(process.env.EFFECTS_DIR)
+  : path.join(EXAMPLES, "effects");
 const PORT = Number(process.env.PORT) || 8765;
 const MAX_SYMBOL_BYTES = 8 * 1024 * 1024;
+const MAX_EFFECT_BYTES = 32 * 1024 * 1024;
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -26,6 +30,9 @@ const MIME = {
   ".json": "application/json; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".png": "image/png",
+  ".webp": "image/webp",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
 };
 
 function send(res, status, body, type) {
@@ -52,6 +59,9 @@ function resolveFile(url) {
   if (clean.startsWith("/symbols/")) {
     return path.join(SYMBOLS, clean.slice("/symbols/".length));
   }
+  if (clean.startsWith("/effects/")) {
+    return path.join(EFFECTS, clean.slice("/effects/".length));
+  }
   if (clean.startsWith("/editor/")) {
     return path.join(EDITOR, clean.slice("/editor/".length));
   }
@@ -64,8 +74,121 @@ function isAllowed(filePath) {
     resolved.startsWith(EDITOR) ||
     resolved.startsWith(RUNTIME) ||
     resolved.startsWith(CONFIGS) ||
-    resolved.startsWith(SYMBOLS)
+    resolved.startsWith(SYMBOLS) ||
+    resolved.startsWith(EFFECTS)
   );
+}
+
+function ensureEffectsDir() {
+  fs.mkdirSync(EFFECTS, { recursive: true });
+}
+
+function sanitizeEffectFileName(raw) {
+  let base = path.basename(String(raw || "effect.json"));
+  base = base.replace(/[^\w.\-]/g, "_");
+  if (!base || base === "." || base === "..") base = "effect.json";
+  if (base.length > 96) base = base.slice(0, 92) + path.extname(base);
+  return base;
+}
+
+function effectIdFromManifestName(fileName) {
+  return fileName.replace(/\.json$/i, "");
+}
+
+function listEffects(cb) {
+  ensureEffectsDir();
+  fs.readdir(EFFECTS, (err, files) => {
+    if (err) return cb(null, []);
+    const jsonFiles = files.filter((f) => /\.json$/i.test(f) && f.toLowerCase() !== "index.json");
+    const out = [];
+    for (const fileName of jsonFiles) {
+      try {
+        const raw = fs.readFileSync(path.join(EFFECTS, fileName), "utf8");
+        const manifest = JSON.parse(raw);
+        out.push({
+          id: effectIdFromManifestName(fileName),
+          name: manifest.name || effectIdFromManifestName(fileName),
+          frameCount: manifest.frameCount || (manifest.frames ? manifest.frames.length : 0),
+          fps: manifest.fps || 24,
+          manifest: fileName,
+          thumb:
+            (manifest.atlas && (manifest.atlas.webp || manifest.atlas.png)) ||
+            (manifest.anim && manifest.anim.webp) ||
+            null,
+          cellW: manifest.cell && manifest.cell.w,
+          cellH: manifest.cell && manifest.cell.h,
+        });
+      } catch {
+        /* skip invalid manifest */
+      }
+    }
+    out.sort((a, b) => a.id.localeCompare(b.id));
+    cb(null, out);
+  });
+}
+
+function handleEffectUpload(req, res, url) {
+  const params = new URL(url, "http://localhost");
+  const rawName = params.searchParams.get("name") || "effect.json";
+  const fileName = sanitizeEffectFileName(rawName);
+  const ext = path.extname(fileName).toLowerCase();
+
+  readRequestBody(req, MAX_EFFECT_BYTES)
+    .then((body) => {
+      if (!body.length) {
+        return sendJson(res, 400, { ok: false, error: "空文件" });
+      }
+      if (ext === ".json") {
+        try {
+          JSON.parse(String(body));
+        } catch {
+          return sendJson(res, 400, { ok: false, error: "无效的 JSON manifest" });
+        }
+      } else if (![".png", ".webp", ".jpg", ".jpeg"].includes(ext)) {
+        return sendJson(res, 400, { ok: false, error: "不支持的文件类型" });
+      }
+
+      ensureEffectsDir();
+      const dest = path.join(EFFECTS, fileName);
+      fs.writeFile(dest, body, (err) => {
+        if (err) return sendJson(res, 500, { ok: false, error: err.message });
+        sendJson(res, 200, {
+          ok: true,
+          name: fileName,
+          id: ext === ".json" ? effectIdFromManifestName(fileName) : undefined,
+          bytes: body.length,
+        });
+      });
+    })
+    .catch((err) => sendJson(res, 400, { ok: false, error: err.message }));
+}
+
+function handleEffectDelete(req, res, url) {
+  const params = new URL(url, "http://localhost");
+  const id = String(params.searchParams.get("id") || "")
+    .replace(/[^\w.\-]/g, "_")
+    .replace(/\.json$/i, "");
+  if (!id) return sendJson(res, 400, { ok: false, error: "缺少 id" });
+
+  ensureEffectsDir();
+  fs.readdir(EFFECTS, (err, files) => {
+    if (err) return sendJson(res, 500, { ok: false, error: err.message });
+    const removed = [];
+    files.forEach((f) => {
+      if (f === id + ".json" || f.startsWith(id + ".")) {
+        try {
+          fs.unlinkSync(path.join(EFFECTS, f));
+          removed.push(f);
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+    if (!removed.length) {
+      return sendJson(res, 404, { ok: false, error: "特效不存在" });
+    }
+    sendJson(res, 200, { ok: true, id, removed });
+  });
 }
 
 function ensureSymbolsDir() {
@@ -205,6 +328,39 @@ function handler(req, res) {
     return handleSymbolDelete(req, res, url);
   }
 
+  if (pathname === "/effects/index.json" && method === "GET") {
+    listEffects((_err, list) => {
+      send(res, 200, JSON.stringify(list, null, 2), "application/json; charset=utf-8");
+    });
+    return;
+  }
+
+  if (pathname === "/effects/upload" && method === "POST") {
+    return handleEffectUpload(req, res, url);
+  }
+
+  if (pathname === "/effects/delete" && method === "DELETE") {
+    return handleEffectDelete(req, res, url);
+  }
+
+  if (
+    method === "OPTIONS" &&
+    (pathname === "/symbols/upload" ||
+      pathname === "/symbols/delete" ||
+      pathname === "/effects/upload" ||
+      pathname === "/effects/delete" ||
+      pathname === "/symbols/index.json" ||
+      pathname === "/effects/index.json")
+  ) {
+    res.writeHead(204, {
+      Allow: "GET, POST, DELETE, HEAD, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, POST, DELETE, HEAD, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    });
+    res.end();
+    return;
+  }
+
   if (method !== "GET" && method !== "HEAD") {
     return send(res, 405, "Method Not Allowed");
   }
@@ -221,9 +377,11 @@ function handler(req, res) {
 }
 
 ensureSymbolsDir();
+ensureEffectsDir();
 http.createServer(handler).listen(PORT, () => {
   console.log("Slot board editor: http://localhost:" + PORT + "/");
   console.log("  runtime:", RUNTIME);
   console.log("  symbols:", SYMBOLS);
+  console.log("  effects:", EFFECTS);
   console.log("  example: http://localhost:" + PORT + "/configs/example-6x5.json");
 });

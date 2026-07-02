@@ -17,6 +17,7 @@
     "export:optimize": "node ./scripts/optimize-lottie.mjs",
     "slot-board:editor": "node ./scripts/serve-slot-board-editor.mjs",
     "test:slot-board-anim": "node ./scripts/test-slot-board-anim.mjs",
+    "test:slot-board-effects-import": "node ./scripts/test-slot-board-effects-import.mjs",
     "pack:effect": "node ./scripts/pack-effect-frames.mjs examples/effect"
   },
   "keywords": [

@@ -195,10 +195,31 @@
     var grid = config.grid || [];
     var cellFill = config.symbols ? config.symbols.cellFill : 0.9;
     var offsets = animState && animState.offsets ? animState.offsets : null;
+    var hiddenCells = animState && animState.hiddenCells ? animState.hiddenCells : null;
+    var markCells = animState && animState.markCells ? animState.markCells : null;
+    var effectOverlays =
+      animState && animState.effectOverlays ? animState.effectOverlays : null;
     var highlightCol =
       animState && animState.highlightCol != null ? animState.highlightCol : null;
     var highlightCols =
       animState && animState.highlightCols ? animState.highlightCols : null;
+
+    function isMarkedCell(c, r) {
+      if (!markCells || !markCells.length) return false;
+      for (var mi = 0; mi < markCells.length; mi++) {
+        if (markCells[mi].col === c && markCells[mi].row === r) return true;
+      }
+      return false;
+    }
+
+    function isHiddenCell(c, r) {
+      if (!hiddenCells) return false;
+      var key = c + "," + r;
+      if (!hiddenCells[key]) return false;
+      // 下落步在 toRow 用 offset.sym 绘制；eliminated 格被 prime 隐藏后仍需显示动画
+      if (offsets && offsets[key] && offsets[key].sym) return false;
+      return true;
+    }
 
     function isHighlightCol(c) {
       if (highlightCols && highlightCols.length) {
@@ -209,19 +230,20 @@
     }
 
     function cellOffset(col, row, sym) {
-      if (!offsets) return { dy: 0, alpha: 1 };
+      if (!offsets) return { dy: 0, alpha: 1, sym: sym };
       var key = col + "," + row;
       var o = offsets[key];
       if (o) {
         return {
           dy: o.dy != null ? o.dy : 0,
           alpha: o.alpha != null ? o.alpha : 1,
+          sym: o.sym != null ? o.sym : sym,
         };
       }
       if (animState && animState.enterMode && sym) {
-        return { dy: 0, alpha: 0 };
+        return { dy: 0, alpha: 0, sym: sym };
       }
-      return { dy: 0, alpha: 1 };
+      return { dy: 0, alpha: 1, sym: sym };
     }
 
     ctx.fillStyle = COLORS.bg;
@@ -234,6 +256,7 @@
         var y = rect.y;
         var sym = grid[r] ? grid[r][c] : null;
         var off = cellOffset(c, r, sym);
+        if (off.sym) sym = off.sym;
 
         ctx.fillStyle = COLORS.cellFill;
         ctx.fillRect(x, y, sw, sh);
@@ -243,7 +266,27 @@
           ctx.fillRect(x, y, sw, sh);
         }
 
-        if (sym && images && images[sym] && off.alpha > 0.01) {
+        if (isMarkedCell(c, r)) {
+          var pickMode = animState && animState.pickEliminateCells;
+          ctx.fillStyle = pickMode
+            ? "rgba(249, 115, 22, 0.38)"
+            : "rgba(249, 115, 22, 0.22)";
+          ctx.fillRect(x, y, sw, sh);
+          ctx.strokeStyle = pickMode
+            ? "rgba(251, 146, 60, 0.98)"
+            : "rgba(249, 115, 22, 0.55)";
+          ctx.lineWidth = pickMode ? 2.5 : 1.5;
+          ctx.strokeRect(x + 1, y + 1, sw - 2, sh - 2);
+          if (pickMode) {
+            ctx.fillStyle = "rgba(255, 237, 213, 0.98)";
+            ctx.font = "bold 10px ui-monospace, monospace";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText("消", x + sw / 2, y + sh / 2);
+          }
+        }
+
+        if (sym && !isHiddenCell(c, r) && images && images[sym] && off.alpha > 0.01) {
           ctx.save();
           ctx.globalAlpha = off.alpha;
           drawSymbolInCell(
@@ -257,7 +300,7 @@
             scaleMulFor(config, sym)
           );
           ctx.restore();
-        } else if (sym && off.alpha > 0.01) {
+        } else if (sym && !isHiddenCell(c, r) && off.alpha > 0.01) {
           ctx.save();
           ctx.globalAlpha = off.alpha;
           ctx.fillStyle = COLORS.label;
@@ -293,6 +336,16 @@
           ctx.lineWidth = 2;
           ctx.strokeRect(x + 1, y + 1, sw - 2, sh - 2);
         }
+      }
+    }
+
+    if (effectOverlays && effectOverlays.length) {
+      for (var ei = 0; ei < effectOverlays.length; ei++) {
+        var fx = effectOverlays[ei];
+        if (!fx || !fx.image || !fx.atlasRect || !fx.placement) continue;
+        var p = fx.placement;
+        var a = fx.atlasRect;
+        ctx.drawImage(fx.image, a.x, a.y, a.w, a.h, p.x, p.y, p.w, p.h);
       }
     }
 
@@ -722,6 +775,22 @@
     }
     this.config = config;
     this.render();
+  };
+
+  /** 仅换 grid/帧数据，不重建 canvas（动画步播放必须用此接口） */
+  SlotBoardRuntime.prototype.applyConfig = function (config, animState) {
+    if (
+      config.board.cols !== this._cols ||
+      config.board.rows !== this._rows
+    ) {
+      throw new Error("SlotBoardRuntime: 行列不可变更，请销毁后重建");
+    }
+    this.config = config;
+    if (this.canvas && this._images) {
+      this.redraw(animState);
+    } else {
+      this.render();
+    }
   };
 
   SlotBoardRuntime.prototype.redraw = function (animState) {

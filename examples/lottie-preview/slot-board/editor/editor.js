@@ -8,14 +8,28 @@
   var STORAGE_KEY_LEGACY = "slot-board-editor.active-config.v4";
   var STORAGE_KEY_LEGACY_V3 = "slot-board-editor.active-config.v3";
   var VIEW_STORAGE_KEY = "slot-board-editor.view-options.v1";
-  var ANIM_PARAMS_STORAGE_KEY = "slot-board-editor.anim-params.v4";
-  var TAB_IDS = ["basic", "layout", "frames", "board", "anim", "flow", "symlib", "file"];
+  var ANIM_PARAMS_STORAGE_KEY = "slot-board-editor.anim-params.v5";
+  var TAB_GROUPS = {
+    project: { label: "工程", tabs: ["basic", "file"] },
+    board: { label: "盘面", tabs: ["layout", "frames", "board"] },
+    anim: { label: "动画", tabs: ["anim", "flow"] },
+    assets: { label: "资源", tabs: ["symlib", "fxlib"] },
+  };
+  var TAB_GROUP_FOR = {};
+  Object.keys(TAB_GROUPS).forEach(function (groupId) {
+    TAB_GROUPS[groupId].tabs.forEach(function (tabId) {
+      TAB_GROUP_FOR[tabId] = groupId;
+    });
+  });
+  var TAB_IDS = ["basic", "layout", "frames", "board", "anim", "flow", "symlib", "fxlib", "file"];
 
   var state = {
     config: null,
     runtime: null,
     activeTab: "basic",
+    activeGroup: "project",
     symbolCatalog: [],
+    effectCatalog: [],
     selectedSymbol: "s1.png",
     selectedCell: null,
     view: {
@@ -25,20 +39,17 @@
       previewZoom: 1,
     },
     anim: {
-      editMode: "exit",
       activeSequenceId: null,
-      exit: {
-        type: "boardDropOut",
-        fromFrameId: "f0",
-        params: null,
-      },
-      enter: {
-        type: "boardDropIn",
-        toFrameId: "f1",
-        params: null,
-      },
-      enterMode: false,
+      activeStepIndex: 0,
+      steps: [],
       playing: false,
+      enterMode: false,
+      pickEliminateCells: false,
+      hiddenCells: {},
+      effectOverlays: [],
+      _effectOverlayMap: {},
+      _effectAtlasImage: null,
+      markCells: null,
       currentAnim: null,
       offsets: {},
     },
@@ -118,13 +129,23 @@
     if (state.activeTab === "anim" || state.activeTab === "flow") {
       animState = {
         offsets: state.anim.offsets,
+        hiddenCells: state.anim.hiddenCells,
+        effectOverlays: state.anim.effectOverlays,
+        markCells: state.anim.markCells,
+        pickEliminateCells: !!state.anim.pickEliminateCells,
         highlightCols: null,
         enterMode: !!state.anim.enterMode,
       };
     }
+    var onCellClick = null;
+    if (state.activeTab === "board") {
+      onCellClick = onCanvasCellClick;
+    } else if (state.activeTab === "anim" && state.anim.pickEliminateCells) {
+      onCellClick = onAnimEliminateCellClick;
+    }
     return Object.assign({}, getViewOptions(), {
       selectedCell: state.activeTab === "board" ? state.selectedCell : null,
-      onCellClick: state.activeTab === "board" ? onCanvasCellClick : null,
+      onCellClick: onCellClick,
       animState: animState,
     });
   }
@@ -156,41 +177,107 @@
     switchToFrame(els.previewFrame.value, { keepSelection: false });
   }
 
-  function getAnimBlock(mode) {
-    return mode === "enter" ? state.anim.enter : state.anim.exit;
+  function getActiveStep() {
+    ensureAnimSteps();
+    return state.anim.steps[state.anim.activeStepIndex] || state.anim.steps[0];
+  }
+
+  function stepBindingLabel(step) {
+    if (!window.SlotBoardAnim || !step) return "Step";
+    try {
+      var tmpl = window.SlotBoardAnim.getAnimTemplate(step.type);
+      if (tmpl.frameBinding === "exit") return "Exit";
+      if (tmpl.frameBinding === "enter") return "Enter";
+      if (tmpl.frameBinding === "eliminate") return "消除";
+      if (tmpl.frameBinding === "cascade") return "下落";
+      return tmpl.label || step.id;
+    } catch (e) {
+      return step.id || "Step";
+    }
+  }
+
+  function ensureAnimSteps() {
+    if (state.anim.steps.length) return;
+    var f0 = state.config && state.config.frames[0] ? state.config.frames[0].id : "f0";
+    var f1 =
+      state.config && state.config.frames[1] ? state.config.frames[1].id : f0;
+    state.anim.steps = [
+      {
+        id: "s1",
+        type: "boardDropOut",
+        fromFrameId: f0,
+        params: templateDefaultParams("boardDropOut"),
+      },
+      {
+        id: "s2",
+        type: "boardDropIn",
+        toFrameId: f1,
+        params: templateDefaultParams("boardDropIn"),
+      },
+    ];
+    state.anim.activeStepIndex = 0;
+  }
+
+  function getStepBinding(type) {
+    if (!type || !window.SlotBoardAnim) return "exit";
+    try {
+      return window.SlotBoardAnim.getAnimTemplate(type).frameBinding;
+    } catch (e) {
+      return "exit";
+    }
+  }
+
+  function defaultStepType(index, step) {
+    step = step || {};
+    if (step.type) return step.type;
+    if (step.fromFrameId && step.toFrameId) {
+      if (step.type === "boardCascadeDrop") return "boardCascadeDrop";
+      return "boardEliminate";
+    }
+    if (step.toFrameId && !step.fromFrameId) return "boardDropIn";
+    if (step.fromFrameId) return "boardDropOut";
+    return index === 0 ? "boardDropOut" : index === 1 ? "boardDropIn" : "boardEliminate";
+  }
+
+  function normalizeEditorAnimStep(step, index) {
+    if (!step || typeof step !== "object") step = {};
+    step.type = defaultStepType(index, step);
+    if (!step.id) step.id = "s" + (index + 1);
+    return step;
+  }
+
+  function normalizeEditorAnimSteps(steps) {
+    return (steps || []).map(function (step, index) {
+      return normalizeEditorAnimStep(step, index);
+    });
   }
 
   function templateDefaultParams(type) {
-    if (!window.SlotBoardAnim) return {};
-    return SlotBoardConfig.deepClone(window.SlotBoardAnim.getAnimTemplate(type).defaultParams);
+    if (!window.SlotBoardAnim || !type) return {};
+    try {
+      return SlotBoardConfig.deepClone(
+        window.SlotBoardAnim.getAnimTemplate(type).defaultParams
+      );
+    } catch (e) {
+      return {};
+    }
   }
 
   function ensureAnimDefaults() {
-    if (!window.SlotBoardAnim || !window.SlotBoardAnim.pickTemplateParams) {
-      if (!state.anim.exit.params) {
-        state.anim.exit.params = templateDefaultParams(state.anim.exit.type);
+    ensureAnimSteps();
+    state.anim.steps = normalizeEditorAnimSteps(state.anim.steps);
+    if (!window.SlotBoardAnim || !window.SlotBoardAnim.pickTemplateParams) return;
+    state.anim.steps.forEach(function (step) {
+      if (!step.type) return;
+      if (!step.params) step.params = templateDefaultParams(step.type);
+      else {
+        try {
+          step.params = window.SlotBoardAnim.pickTemplateParams(step.type, step.params);
+        } catch (e) {
+          step.params = templateDefaultParams(step.type);
+        }
       }
-      if (!state.anim.enter.params) {
-        state.anim.enter.params = templateDefaultParams(state.anim.enter.type);
-      }
-      return;
-    }
-    if (!state.anim.exit.params) {
-      state.anim.exit.params = templateDefaultParams(state.anim.exit.type);
-    } else {
-      state.anim.exit.params = window.SlotBoardAnim.pickTemplateParams(
-        state.anim.exit.type,
-        state.anim.exit.params
-      );
-    }
-    if (!state.anim.enter.params) {
-      state.anim.enter.params = templateDefaultParams(state.anim.enter.type);
-    } else {
-      state.anim.enter.params = window.SlotBoardAnim.pickTemplateParams(
-        state.anim.enter.type,
-        state.anim.enter.params
-      );
-    }
+    });
   }
 
   function loadAnimParams() {
@@ -198,18 +285,31 @@
       var raw = localStorage.getItem(ANIM_PARAMS_STORAGE_KEY);
       if (!raw) return;
       var parsed = JSON.parse(raw);
-      if (parsed.editMode === "enter" || parsed.editMode === "exit") {
-        state.anim.editMode = parsed.editMode;
+      if (Array.isArray(parsed.steps) && parsed.steps.length) {
+        state.anim.steps = normalizeEditorAnimSteps(parsed.steps);
+        state.anim.activeStepIndex = parsed.activeStepIndex || 0;
+        return;
       }
-      if (parsed.exit) {
-        if (parsed.exit.type) state.anim.exit.type = parsed.exit.type;
-        if (parsed.exit.fromFrameId) state.anim.exit.fromFrameId = parsed.exit.fromFrameId;
-        if (parsed.exit.params) state.anim.exit.params = parsed.exit.params;
-      }
-      if (parsed.enter) {
-        if (parsed.enter.type) state.anim.enter.type = parsed.enter.type;
-        if (parsed.enter.toFrameId) state.anim.enter.toFrameId = parsed.enter.toFrameId;
-        if (parsed.enter.params) state.anim.enter.params = parsed.enter.params;
+      if (parsed.exit || parsed.enter) {
+        state.anim.steps = [];
+        if (parsed.exit) {
+          state.anim.steps.push({
+            id: "s1",
+            type: parsed.exit.type || "boardDropOut",
+            fromFrameId: parsed.exit.fromFrameId || "f0",
+            params: parsed.exit.params || null,
+          });
+        }
+        if (parsed.enter) {
+          state.anim.steps.push({
+            id: "s2",
+            type: parsed.enter.type || "boardDropIn",
+            toFrameId: parsed.enter.toFrameId || "f1",
+            params: parsed.enter.params || null,
+          });
+        }
+        state.anim.activeStepIndex =
+          parsed.editMode === "enter" && state.anim.steps.length > 1 ? 1 : 0;
       }
     } catch (e) {
       localStorage.removeItem(ANIM_PARAMS_STORAGE_KEY);
@@ -221,16 +321,19 @@
     localStorage.setItem(
       ANIM_PARAMS_STORAGE_KEY,
       JSON.stringify({
-        editMode: state.anim.editMode,
-        exit: state.anim.exit,
-        enter: state.anim.enter,
+        activeStepIndex: state.anim.activeStepIndex,
+        steps: state.anim.steps,
       })
     );
   }
 
   function getAnimTemplateSchema(type) {
-    if (!window.SlotBoardAnim) return [];
-    return window.SlotBoardAnim.getAnimTemplate(type).paramSchema || [];
+    if (!window.SlotBoardAnim || !type) return [];
+    try {
+      return window.SlotBoardAnim.getAnimTemplate(type).paramSchema || [];
+    } catch (e) {
+      return [];
+    }
   }
 
   function getParamFieldEl(key) {
@@ -249,6 +352,9 @@
 
   function readSchemaField(fieldDef, control) {
     if (!control) return undefined;
+    if (fieldDef.key === "effectId" && els.animParamEffectId) {
+      return els.animParamEffectId.value;
+    }
     if (fieldDef.type === "checkbox") return control.checked;
     if (fieldDef.type === "select") return control.value;
     if (fieldDef.type === "number") {
@@ -294,10 +400,29 @@
     else if (fieldDef.options.length) select.value = fieldDef.options[0].value;
   }
 
+  function syncEffectIdOptions() {
+    if (!els.animParamEffectId) return;
+    var step = getActiveStep();
+    var current = (step.params && step.params.effectId) || "bingo_frame";
+    els.animParamEffectId.innerHTML = "";
+    var options = state.effectCatalog.length
+      ? state.effectCatalog.map(function (e) {
+          return { value: e.id, label: e.id + " (" + e.frameCount + "f)" };
+        })
+      : [{ value: "bingo_frame", label: "bingo_frame" }];
+    options.forEach(function (opt) {
+      var o = document.createElement("option");
+      o.value = opt.value;
+      o.textContent = opt.label;
+      if (opt.value === current) o.selected = true;
+      els.animParamEffectId.appendChild(o);
+    });
+  }
+
   function syncAnimParamUi() {
     if (!els.animParamFields) return;
-    var block = getAnimBlock(state.anim.editMode);
-    var schema = getAnimTemplateSchema(block.type);
+    var step = getActiveStep();
+    var schema = getAnimTemplateSchema(step.type);
     var visible = {};
     schema.forEach(function (field) {
       visible[field.key] = field;
@@ -309,88 +434,129 @@
       if (!field) return;
       var title = label.querySelector(".anim-param-label");
       if (title) title.textContent = field.label;
-      if (field.type === "select") {
+      if (field.type === "select" && key !== "effectId") {
         var select = label.querySelector("select");
         if (select) syncSelectOptions(select, field);
       }
     });
+    if (visible.effectId) syncEffectIdOptions();
+    syncEliminateHideOffsetUi();
+  }
+
+  function syncEliminateHideOffsetUi() {
+    var step = getActiveStep();
+    var field = getParamFieldEl("hideSymbolOffset");
+    if (!field) return;
+    var show =
+      step &&
+      step.type === "boardEliminate" &&
+      step.params &&
+      step.params.hideSymbolAt === "timeOffset";
+    field.classList.toggle("hidden", !show);
   }
 
   function readCurrentBlockFromUi() {
     if (!state.config) return;
-    var block = getAnimBlock(state.anim.editMode);
-    if (els.animTemplate) block.type = els.animTemplate.value;
-    if (els.animFrame) {
-      if (state.anim.editMode === "exit") block.fromFrameId = els.animFrame.value;
-      else block.toFrameId = els.animFrame.value;
+    var step = getActiveStep();
+    if (els.animTemplate && els.animTemplate.value) {
+      step.type = els.animTemplate.value;
     }
-    var schema = getAnimTemplateSchema(block.type);
-    var raw = Object.assign({}, block.params || templateDefaultParams(block.type));
+    if (!step.type) {
+      normalizeEditorAnimStep(step, state.anim.activeStepIndex);
+    }
+    var binding = getStepBinding(step.type);
+    if (els.animFrame) {
+      if (binding === "enter") step.toFrameId = els.animFrame.value;
+      else step.fromFrameId = els.animFrame.value;
+    }
+    if (els.animFrameTo && (binding === "eliminate" || binding === "cascade")) {
+      step.toFrameId = els.animFrameTo.value;
+    }
+    var schema = getAnimTemplateSchema(step.type);
+    var raw = Object.assign({}, step.params || templateDefaultParams(step.type));
+    if (step.type === "boardEliminate" && Array.isArray(step.params && step.params.cellList)) {
+      raw.cellList = step.params.cellList.slice();
+    }
     schema.forEach(function (field) {
-      var control = getParamControl(field.key);
+      var control = field.key === "effectId" ? els.animParamEffectId : getParamControl(field.key);
       raw[field.key] = readSchemaField(field, control);
     });
     if (window.SlotBoardAnim && window.SlotBoardAnim.pickTemplateParams) {
-      block.params = window.SlotBoardAnim.pickTemplateParams(block.type, raw);
+      step.params = window.SlotBoardAnim.pickTemplateParams(step.type, raw);
     } else {
-      block.params = raw;
+      step.params = raw;
     }
     saveAnimParams();
   }
 
   function writeCurrentBlockToUi() {
     ensureAnimDefaults();
-    var block = getAnimBlock(state.anim.editMode);
-    var p = block.params;
-    if (els.animTemplate) els.animTemplate.value = block.type;
+    var step = getActiveStep();
+    var p = step.params;
+    syncTemplateSelect();
+    if (els.animTemplate) els.animTemplate.value = step.type;
     syncAnimFrameSelect();
     syncAnimParamUi();
-    var schema = getAnimTemplateSchema(block.type);
+    var schema = getAnimTemplateSchema(step.type);
     schema.forEach(function (field) {
-      writeSchemaField(field, getParamControl(field.key), p[field.key]);
+      var control =
+        field.key === "effectId" ? els.animParamEffectId : getParamControl(field.key);
+      writeSchemaField(field, control, p[field.key]);
     });
+    syncEliminatePanel();
+    syncEliminateHideOffsetUi();
   }
 
-  function buildStepFromMode(mode) {
-    readCurrentBlockFromUi();
-    var block = getAnimBlock(mode);
-    var params = block.params;
+  function buildStepFromState(step, index) {
+    var params = step.params;
     if (window.SlotBoardAnim && window.SlotBoardAnim.pickTemplateParams) {
-      params = window.SlotBoardAnim.pickTemplateParams(block.type, block.params);
+      params = window.SlotBoardAnim.pickTemplateParams(step.type, step.params);
     }
-    var step = {
-      id: mode === "exit" ? "s1" : "s2",
-      type: block.type,
+    var out = {
+      id: step.id || "s" + (index + 1),
+      type: step.type,
       params: SlotBoardConfig.deepClone(params),
     };
-    if (mode === "exit") step.fromFrameId = block.fromFrameId;
-    else step.toFrameId = block.toFrameId;
-    return step;
+    if (step.fromFrameId) out.fromFrameId = step.fromFrameId;
+    if (step.toFrameId) out.toFrameId = step.toFrameId;
+    return out;
+  }
+
+  function buildStepFromIndex(index) {
+    readCurrentBlockFromUi();
+    var step = state.anim.steps[index];
+    if (!step) throw new Error("无效步骤索引");
+    return buildStepFromState(step, index);
   }
 
   function loadSequenceToState(sequence) {
     if (!sequence || !sequence.steps) return;
     state.anim.activeSequenceId = sequence.id;
-    sequence.steps.forEach(function (step) {
-      var tmpl = window.SlotBoardAnim && window.SlotBoardAnim.getAnimTemplate(step.type);
-      if (!tmpl) return;
-      if (tmpl.frameBinding === "exit") {
-        state.anim.exit.type = step.type;
-        state.anim.exit.fromFrameId = step.fromFrameId || state.anim.exit.fromFrameId;
-        state.anim.exit.params = window.SlotBoardAnim.pickTemplateParams(
-          step.type,
-          step.params || templateDefaultParams(step.type)
-        );
-      } else if (tmpl.frameBinding === "enter") {
-        state.anim.enter.type = step.type;
-        state.anim.enter.toFrameId = step.toFrameId || state.anim.enter.toFrameId;
-        state.anim.enter.params = window.SlotBoardAnim.pickTemplateParams(
-          step.type,
-          step.params || templateDefaultParams(step.type)
-        );
-      }
+    state.anim.steps = sequence.steps.map(function (step, index) {
+      var normalized = normalizeEditorAnimStep(
+        {
+          id: step.id || "s" + (index + 1),
+          type: step.type,
+          fromFrameId: step.fromFrameId,
+          toFrameId: step.toFrameId,
+          params: step.params,
+        },
+        index
+      );
+      normalized.params = window.SlotBoardAnim
+        ? window.SlotBoardAnim.pickTemplateParams(
+            normalized.type,
+            normalized.params || templateDefaultParams(normalized.type)
+          )
+        : normalized.params || templateDefaultParams(normalized.type);
+      return normalized;
     });
+    state.anim.activeStepIndex = 0;
+    state.anim.pickEliminateCells = false;
+    ensureAnimDefaults();
     writeCurrentBlockToUi();
+    syncAnimStepTabs();
+    syncAnimLinkPresetUi();
   }
 
   function getWorkingSequence() {
@@ -398,20 +564,26 @@
     var existing = state.anim.activeSequenceId
       ? SlotBoardConfig.getSequence(state.config, state.anim.activeSequenceId)
       : null;
+    var steps = state.anim.steps.map(function (s, i) {
+      return buildStepFromState(s, i);
+    });
     var name = SlotBoardConfig.formatLinkLabel(state.config, {
       id: existing ? existing.id : "new",
-      steps: [buildStepFromMode("exit"), buildStepFromMode("enter")],
+      steps: steps,
     });
     return {
       id: existing ? existing.id : undefined,
       name: name,
-      steps: [buildStepFromMode("exit"), buildStepFromMode("enter")],
+      steps: steps,
     };
   }
 
   function getAnimDrawState() {
     return {
       offsets: state.anim.offsets,
+      hiddenCells: state.anim.hiddenCells,
+      effectOverlays: state.anim.effectOverlays,
+      markCells: state.anim.markCells,
       highlightCols: null,
       enterMode: !!state.anim.enterMode,
     };
@@ -419,55 +591,115 @@
 
   function formatAnimReadyLabel() {
     if (!state.config) return "就绪";
-    var mode = state.anim.editMode === "enter" ? "Enter" : "Exit";
-    var block = getAnimBlock(state.anim.editMode);
+    var step = getActiveStep();
     ensureAnimDefaults();
-    var tmpl = window.SlotBoardAnim.getAnimTemplate(block.type);
-    var frameId = state.anim.editMode === "exit" ? block.fromFrameId : block.toFrameId;
-    return "就绪 · " + mode + " 步骤 · " + tmpl.label + " · " + frameId;
+    var tmpl = window.SlotBoardAnim.getAnimTemplate(step.type);
+    var binding = tmpl.frameBinding;
+    var frameHint =
+      binding === "enter"
+        ? step.toFrameId
+        : binding === "eliminate" || binding === "cascade"
+          ? (step.fromFrameId || "?") + "→" + (step.toFrameId || "?")
+          : step.fromFrameId;
+    return (
+      "就绪 · " +
+      stepBindingLabel(step) +
+      " · " +
+      tmpl.label +
+      " · " +
+      frameHint
+    );
   }
 
   function syncTemplateSelect() {
     if (!els.animTemplate || !window.SlotBoardAnim) return;
-    var list =
-      state.anim.editMode === "enter"
-        ? window.SlotBoardAnim.listEnterAnimTemplates()
-        : window.SlotBoardAnim.listExitAnimTemplates();
-    var block = getAnimBlock(state.anim.editMode);
+    var step = getActiveStep();
+    var binding = getStepBinding(step.type);
+    var list = window.SlotBoardAnim.listAnimTemplates().filter(function (t) {
+      return t.frameBinding === binding;
+    });
     els.animTemplate.innerHTML = "";
     list.forEach(function (t) {
       var opt = document.createElement("option");
       opt.value = t.type;
       opt.textContent = t.type + " — " + t.label;
-      if (t.type === block.type) opt.selected = true;
+      if (t.type === step.type) opt.selected = true;
       els.animTemplate.appendChild(opt);
     });
   }
 
   function syncAnimFrameSelect() {
     if (!els.animFrame || !state.config) return;
-    var block = getAnimBlock(state.anim.editMode);
-    var selected = state.anim.editMode === "exit" ? block.fromFrameId : block.toFrameId;
+    var step = getActiveStep();
+    var binding = getStepBinding(step.type);
+    var selectedFrom = step.fromFrameId || state.config.frames[0].id;
+    var selectedTo =
+      step.toFrameId ||
+      (state.config.frames[1] ? state.config.frames[1].id : selectedFrom);
     var excludeId = state.anim.activeSequenceId;
+
+    if (els.animFrameWrap) {
+      els.animFrameWrap.classList.toggle("hidden", binding === "enter" && false);
+    }
+    if (els.animFrameToWrap) {
+      els.animFrameToWrap.classList.toggle(
+        "hidden",
+        binding !== "eliminate" && binding !== "cascade"
+      );
+    }
+
     els.animFrame.innerHTML = "";
     state.config.frames.forEach(function (frame) {
       var opt = document.createElement("option");
       opt.value = frame.id;
       var label = frame.id + " · " + frame.name;
       var occupied = null;
-      if (state.anim.editMode === "exit") {
-        occupied = SlotBoardConfig.findSequenceByFromFrame(state.config, frame.id, excludeId);
+      if (binding === "exit" || binding === "eliminate" || binding === "cascade") {
+        occupied = SlotBoardConfig.findSequenceByFromFrame(
+          state.config,
+          frame.id,
+          excludeId
+        );
       } else {
-        occupied = SlotBoardConfig.findSequenceByToFrame(state.config, frame.id, excludeId);
+        occupied = SlotBoardConfig.findSequenceByToFrame(
+          state.config,
+          frame.id,
+          excludeId
+        );
       }
       if (occupied) label += " (已占用)";
       opt.textContent = label;
-      if (frame.id === selected) opt.selected = true;
-      if (occupied && frame.id !== selected) opt.disabled = true;
+      var selected =
+        binding === "enter" ? frame.id === selectedTo : frame.id === selectedFrom;
+      if (selected) opt.selected = true;
+      if (occupied && !selected) opt.disabled = true;
       els.animFrame.appendChild(opt);
     });
+
+    if (els.animFrameTo) {
+      els.animFrameTo.innerHTML = "";
+      state.config.frames.forEach(function (frame) {
+        var opt = document.createElement("option");
+        opt.value = frame.id;
+        var label = frame.id + " · " + frame.name;
+        var occupied = SlotBoardConfig.findSequenceByToFrame(
+          state.config,
+          frame.id,
+          excludeId
+        );
+        if (occupied) label += " (已占用)";
+        opt.textContent = label;
+        if (frame.id === selectedTo) opt.selected = true;
+        if (occupied && frame.id !== selectedTo) opt.disabled = true;
+        els.animFrameTo.appendChild(opt);
+      });
+    }
+
     if (els.animFrameLabel) {
-      els.animFrameLabel.textContent = state.anim.editMode === "exit" ? "from 帧" : "to 帧";
+      if (binding === "enter") els.animFrameLabel.textContent = "to 帧";
+      else if (binding === "eliminate" || binding === "cascade")
+        els.animFrameLabel.textContent = "from 帧";
+      else els.animFrameLabel.textContent = "from 帧";
     }
     syncAnimLinkEndpoints();
   }
@@ -478,10 +710,11 @@
       els.animLinkEndpoints.textContent = "请选择或新建动画实例";
       return;
     }
-    var fromId = state.anim.exit.fromFrameId;
-    var toId = state.anim.enter.toFrameId;
-    var text = "链路 " + fromId + " → " + toId;
-    if (fromId === toId) text += " · from / to 不能相同";
+    var ends = SlotBoardConfig.getSequenceEndpoints({ steps: state.anim.steps });
+    var fromId = ends.fromFrameId;
+    var toId = ends.toFrameId;
+    var text = "链路 " + (fromId || "?") + " → " + (toId || "?");
+    if (fromId && toId && fromId === toId) text += " · from / to 不能相同";
     els.animLinkEndpoints.textContent = text;
   }
 
@@ -511,15 +744,162 @@
     }
   }
 
-  function syncAnimEditModeUi() {
-    if (els.animModeTabs) {
-      els.animModeTabs.forEach(function (btn) {
-        btn.classList.toggle("active", btn.dataset.mode === state.anim.editMode);
+  function syncAnimStepTabs() {
+    if (!els.animStepTabs) return;
+    ensureAnimSteps();
+    els.animStepTabs.innerHTML = "";
+    state.anim.steps.forEach(function (step, index) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className =
+        "anim-mode" + (index === state.anim.activeStepIndex ? " active" : "");
+      btn.dataset.stepIndex = String(index);
+      btn.textContent = stepBindingLabel(step);
+      btn.addEventListener("click", function () {
+        switchAnimStepIndex(index);
       });
+      els.animStepTabs.appendChild(btn);
+    });
+  }
+
+  function resolveAnimPreviewFrameId(step) {
+    if (!step || !state.config) return null;
+    var binding = getStepBinding(step.type);
+    if (binding === "enter") return step.toFrameId || null;
+    if (binding === "cascade") return step.fromFrameId || null;
+    return step.fromFrameId || null;
+  }
+
+  function syncBoardPreviewToFrame(frameId) {
+    if (!state.config || !frameId) return;
+    if (state.config.activeFrameId === frameId) {
+      syncPreviewFrameSelect();
+      refreshRuntimeView();
+      return;
     }
+    try {
+      if (state.anim.playing) stopAnimPreview(false);
+      state.config = SlotBoardConfig.setActiveFrame(state.config, frameId);
+      saveDraft();
+      syncFrameUi();
+      refreshBoardPanel();
+      if (state.runtime) {
+        state.runtime.setConfig(state.config);
+        refreshRuntimeView();
+      }
+    } catch (e) {
+      alert(e.message);
+    }
+  }
+
+  function syncBoardToAnimStepFrame() {
+    if (state.activeTab !== "anim" && state.activeTab !== "flow") return;
+    var frameId = resolveAnimPreviewFrameId(getActiveStep());
+    if (frameId) syncBoardPreviewToFrame(frameId);
+  }
+
+  function formatEliminatePickStatus(list) {
+    var count = list ? list.length : 0;
+    var hint =
+      count > 0
+        ? list
+            .slice(0, 4)
+            .map(function (c) {
+              return "c" + (c.col + 1) + "r" + (c.row + 1);
+            })
+            .join(", ") + (count > 4 ? "…" : "")
+        : "尚未选格";
+    return "点选中 · 已选 " + count + " 格" + (count ? " (" + hint + ")" : "");
+  }
+
+  function syncEliminatePanel() {
+    var step = getActiveStep();
+    var isEliminate = step && step.type === "boardEliminate";
+    var isCascade = step && step.type === "boardCascadeDrop";
+    if (els.animEliminateExtra) {
+      els.animEliminateExtra.classList.toggle("hidden", !isEliminate && !isCascade);
+    }
+    if (!isEliminate && !isCascade) {
+      state.anim.markCells = null;
+      return;
+    }
+    if (!state.config) {
+      state.anim.markCells = null;
+      return;
+    }
+    var eliminatedStep = step;
+    if (step.type === "boardCascadeDrop" && state.anim.activeStepIndex > 0) {
+      var prior = state.anim.steps[state.anim.activeStepIndex - 1];
+      if (prior && prior.type === "boardEliminate") eliminatedStep = prior;
+    }
+    if (step.params && step.params.cells) {
+      var cellsControl = getParamControl("cells");
+      if (cellsControl && step.type === "boardEliminate") {
+        cellsControl.value = step.params.cells;
+      }
+    }
+    var cells = SlotBoardConfig.computeEliminateCells(state.config, {
+      fromFrameId: eliminatedStep.fromFrameId || step.fromFrameId,
+      toFrameId: eliminatedStep.toFrameId || step.toFrameId,
+      params: eliminatedStep.params || step.params,
+    });
+    if (els.animEliminateCellsSummary) {
+      var modeLabel =
+        eliminatedStep.params && eliminatedStep.params.cells === "explicit"
+          ? "手动点选"
+          : "帧差分";
+      var prefix = isCascade ? "下落 · 沿用消除格 · " : "";
+      els.animEliminateCellsSummary.textContent =
+        prefix +
+        modeLabel +
+        " · " +
+        cells.length +
+        " 格" +
+        (cells.length
+          ? " (" +
+            cells
+              .slice(0, 6)
+              .map(function (c) {
+                return "c" + (c.col + 1) + "r" + (c.row + 1);
+              })
+              .join(", ") +
+            (cells.length > 6 ? "…" : "") +
+            ")"
+          : "");
+    }
+    state.anim.markCells = cells.slice();
+    if (els.btnAnimPickCells) {
+      els.btnAnimPickCells.classList.toggle("primary", !!state.anim.pickEliminateCells);
+      els.btnAnimPickCells.textContent = state.anim.pickEliminateCells
+        ? "点选中…"
+        : "盘面点选";
+    }
+    if (state.anim.pickEliminateCells && state.activeTab === "anim") {
+      refreshRuntimeView();
+    }
+  }
+
+  function switchAnimStepIndex(index) {
+    if (index < 0 || index >= state.anim.steps.length) return;
+    readCurrentBlockFromUi();
+    state.anim.activeStepIndex = index;
+    state.anim.pickEliminateCells = false;
+    syncAnimStepTabs();
     syncTemplateSelect();
     syncAnimFrameSelect();
     writeCurrentBlockToUi();
+    if (state.runtime) state.runtime.setViewOptions(getRuntimeViewOptions());
+    syncBoardToAnimStepFrame();
+    setAnimStatus(formatAnimReadyLabel());
+  }
+
+  function syncAnimEditModeUi() {
+    syncAnimStepTabs();
+    syncTemplateSelect();
+    syncAnimFrameSelect();
+    writeCurrentBlockToUi();
+    syncAnimLinkPresetUi();
+    syncBoardToAnimStepFrame();
   }
 
   function syncAnimSequenceSelect() {
@@ -528,29 +908,24 @@
 
   function syncAnimPanel() {
     if (!state.config) return;
-    ensureAnimDefaults();
-    if (state.config.frames.length >= 2) {
-      if (!state.anim.exit.fromFrameId) state.anim.exit.fromFrameId = state.config.frames[0].id;
-      if (!state.anim.enter.toFrameId) state.anim.enter.toFrameId = state.config.frames[1].id;
-    }
     syncAnimLinkSelect();
     if (state.anim.activeSequenceId) {
       var seq = SlotBoardConfig.getSequence(state.config, state.anim.activeSequenceId);
       if (seq) loadSequenceToState(seq);
     } else if (state.config.sequences && state.config.sequences.length) {
       loadSequenceToState(state.config.sequences[0]);
+    } else {
+      ensureAnimSteps();
+      ensureAnimDefaults();
+      syncAnimEditModeUi();
     }
-    syncAnimEditModeUi();
     updateAnimButtons();
     if (!state.anim.playing) setAnimStatus(formatAnimReadyLabel());
   }
 
   function switchAnimEditMode(mode) {
-    if (mode !== "exit" && mode !== "enter") return;
-    readCurrentBlockFromUi();
-    state.anim.editMode = mode;
-    syncAnimEditModeUi();
-    setAnimStatus(formatAnimReadyLabel());
+    var index = mode === "enter" ? 1 : 0;
+    switchAnimStepIndex(index);
   }
 
   function setAnimStatus(text, kind) {
@@ -585,6 +960,10 @@
 
   function resetAnimOffsets() {
     state.anim.offsets = {};
+    state.anim.hiddenCells = {};
+    state.anim.effectOverlays = [];
+    state.anim._effectOverlayMap = {};
+    state.anim._effectAtlasImage = null;
     if (state.runtime && (state.activeTab === "anim" || state.activeTab === "flow")) {
       state.runtime.redraw(getAnimDrawState());
     }
@@ -605,27 +984,88 @@
     }
   }
 
-  function makeAnimHooks() {
-    return {
+  function makeAnimHooks(meta) {
+    var hooks = {
       onOffsetsReset: resetAnimOffsets,
-      onUpdate: function (c, row, dy, alpha) {
-        state.anim.offsets[c + "," + row] = { dy: dy, alpha: alpha };
+      onUpdate: function (c, row, dy, alpha, sym) {
+        var key = c + "," + row;
+        if (sym) {
+          state.anim.offsets[key] = { dy: dy, alpha: alpha, sym: sym };
+        } else {
+          state.anim.offsets[key] = { dy: dy, alpha: alpha };
+        }
         if (state.runtime) state.runtime.redraw(getAnimDrawState());
+      },
+      onHiddenChange: function (col, row, hidden) {
+        var key = col + "," + row;
+        if (hidden) state.anim.hiddenCells[key] = true;
+        else delete state.anim.hiddenCells[key];
+        if (state.runtime) state.runtime.redraw(getAnimDrawState());
+      },
+      onEffectFrame: function (data) {
+        if (!state.anim._effectOverlayMap) state.anim._effectOverlayMap = {};
+        if (!data || data.col == null || data.row == null) return;
+        var key = data.col + "," + data.row;
+        if (!data.atlasRect) {
+          delete state.anim._effectOverlayMap[key];
+        } else {
+          state.anim._effectOverlayMap[key] = {
+            placement: data.placement,
+            atlasRect: data.atlasRect,
+            image: data.image || state.anim._effectAtlasImage,
+          };
+        }
+        state.anim.effectOverlays = Object.keys(state.anim._effectOverlayMap).map(function (k) {
+          return state.anim._effectOverlayMap[k];
+        });
+        if (state.runtime) state.runtime.redraw(getAnimDrawState());
+      },
+      onError: function (err) {
+        setAnimStatus((err && err.message) || "特效播放失败", "error");
+      },
+      onCascadeComplete: function (toFrameId) {
+        if (!state.config || !state.runtime || !toFrameId || !window.SlotBoardAnim) return;
+        try {
+          var runtimeConfig = window.SlotBoardAnim.configWithFrameGrid(
+            state.config,
+            toFrameId
+          );
+          if (window.SBTrace) {
+            window.SBTrace.boardSnapshot("afterCascadeComplete", runtimeConfig, getAnimDrawState(), {
+              toFrameId: toFrameId,
+            });
+          }
+          state.anim.offsets = {};
+          state.anim.hiddenCells = {};
+          state.runtime.applyConfig(runtimeConfig, getAnimDrawState());
+        } catch (e) {
+          console.warn(e);
+        }
       },
       onStepStart: function (step, runtimeConfig) {
         resetAnimOffsets();
         var stepTmpl = window.SlotBoardAnim && window.SlotBoardAnim.getAnimTemplate(step.type);
         state.anim.enterMode = !!(stepTmpl && stepTmpl.frameBinding === "enter");
+        if (window.SBTrace) {
+          window.SBTrace.boardSnapshot("onStepStart", runtimeConfig, getAnimDrawState(), {
+            stepType: step.type,
+            fromFrameId: step.fromFrameId,
+            toFrameId: step.toFrameId,
+          });
+        }
         if (state.runtime) {
           try {
-            state.runtime.setConfig(runtimeConfig);
-            state.runtime.redraw(getAnimDrawState());
+            state.runtime.applyConfig(runtimeConfig, getAnimDrawState());
           } catch (e) {
             console.warn(e);
           }
         }
       },
     };
+    if (window.SBTrace && window.SBTrace.wrapAnimHooks) {
+      return window.SBTrace.wrapAnimHooks(hooks, meta || {});
+    }
+    return hooks;
   }
 
   function saveCurrentStepToConfig() {
@@ -647,11 +1087,47 @@
       saveDraft();
       syncAnimLinkSelect();
       syncFlowPanel();
-      var modeLabel = state.anim.editMode === "exit" ? "Exit" : "Enter";
-      setAnimStatus("已保存实例 " + modeLabel + " · " + seq.name);
+      var stepLabel = stepBindingLabel(getActiveStep());
+      setAnimStatus("已保存实例 " + stepLabel + " · " + seq.name);
     } catch (e) {
       alert(e.message);
     }
+  }
+
+  function persistActiveSequenceEdits() {
+    if (!state.config || !state.anim.activeSequenceId) return;
+    try {
+      var seq = getWorkingSequence();
+      state.config = SlotBoardConfig.upsertSequence(state.config, seq);
+      saveDraft();
+    } catch (e) {
+      console.warn("persistActiveSequenceEdits:", e);
+    }
+  }
+
+  function buildAnimStepCtx(stepIndex, step) {
+    readCurrentBlockFromUi();
+    var meta = {
+      stepIndex: stepIndex,
+      stepType: step && step.type,
+      sequenceId: state.anim.activeSequenceId,
+    };
+    var hooks = makeAnimHooks(meta);
+    var priorEliminate = null;
+    if (step.type === "boardCascadeDrop" && stepIndex > 0) {
+      var prior = buildStepFromState(
+        state.anim.steps[stepIndex - 1],
+        stepIndex - 1
+      );
+      if (prior.type === "boardEliminate") priorEliminate = prior;
+    }
+    return Object.assign({}, hooks, {
+      sequenceSteps: state.anim.steps.map(function (s, i) {
+        return buildStepFromState(s, i);
+      }),
+      stepIndex: stepIndex,
+      priorEliminateStep: priorEliminate,
+    });
   }
 
   function playStepPreview() {
@@ -662,11 +1138,29 @@
     }
     stopAnimPreview(false);
     resetAnimOffsets();
-    var mode = state.anim.editMode;
+    var stepIndex = state.anim.activeStepIndex;
     var step;
+    var stepCtx;
     try {
-      step = buildStepFromMode(mode);
-      window.SlotBoardAnim.validateAnimStep(step, state.config);
+      step = buildStepFromIndex(stepIndex);
+      stepCtx = buildAnimStepCtx(stepIndex, step);
+      window.SlotBoardAnim.validateAnimStep(step, state.config, stepCtx);
+      if (window.SBTrace) {
+        window.SBTrace.log("editor", "playStepPreview", {
+          stepIndex: stepIndex,
+          type: step.type,
+          fromFrameId: step.fromFrameId,
+          toFrameId: step.toFrameId,
+          priorEliminate: stepCtx.priorEliminateStep
+            ? {
+                cells: stepCtx.priorEliminateStep.params &&
+                  stepCtx.priorEliminateStep.params.cellList,
+                cellsMode: stepCtx.priorEliminateStep.params &&
+                  stepCtx.priorEliminateStep.params.cells,
+              }
+            : null,
+        });
+      }
     } catch (e) {
       setAnimStatus(e.message, "error");
       return;
@@ -675,32 +1169,56 @@
     state.anim.enterMode = tmpl.frameBinding === "enter";
     state.anim.playing = true;
     updateAnimButtons();
-    setAnimStatus("播放 " + mode + " 步骤 · " + tmpl.label + "…", "playing");
-    var runtimeConfig = window.SlotBoardAnim.getStepRuntimeConfig(step, state.config);
-    if (state.runtime) {
-      state.runtime.setConfig(runtimeConfig);
-      state.runtime.redraw(getAnimDrawState());
+    setAnimStatus(
+      "播放 " + stepBindingLabel(getActiveStep()) + " · " + tmpl.label + "…",
+      "playing"
+    );
+
+    function startPlay() {
+      var runtimeConfig = window.SlotBoardAnim.getStepRuntimeConfig(
+        step,
+        state.config,
+        stepCtx
+      );
+      if (state.runtime) {
+        state.runtime.applyConfig(runtimeConfig, getAnimDrawState());
+      }
+      var anim = window.SlotBoardAnim.buildStepAnim(step, state.config, stepCtx);
+      state.anim.currentAnim = anim;
+      anim
+        .play()
+        .then(function () {
+          if (state.anim.currentAnim !== anim) return;
+          state.anim.currentAnim = null;
+          state.anim.playing = false;
+          updateAnimButtons();
+          setAnimStatus(tmpl.label + " 完成");
+        })
+        .catch(function (err) {
+          if (state.anim.currentAnim !== anim) return;
+          state.anim.currentAnim = null;
+          state.anim.playing = false;
+          resetAnimOffsets();
+          updateAnimButtons();
+          if (err && err.name === "CancelledError") setAnimStatus("已取消");
+          else setAnimStatus((err && err.message) || "播放失败", "error");
+        });
     }
-    var anim = window.SlotBoardAnim.buildStepAnim(step, state.config, makeAnimHooks());
-    state.anim.currentAnim = anim;
-    anim
-      .play()
-      .then(function () {
-        if (state.anim.currentAnim !== anim) return;
-        state.anim.currentAnim = null;
-        state.anim.playing = false;
-        updateAnimButtons();
-        setAnimStatus(tmpl.label + " 完成");
-      })
-      .catch(function (err) {
-        if (state.anim.currentAnim !== anim) return;
-        state.anim.currentAnim = null;
-        state.anim.playing = false;
-        resetAnimOffsets();
-        updateAnimButtons();
-        if (err && err.name === "CancelledError") setAnimStatus("已取消");
-        else setAnimStatus((err && err.message) || "播放失败", "error");
-      });
+
+    if (step.type === "boardEliminate" && step.params && step.params.effectId) {
+      window.SlotBoardAnim.loadEffect(step.params.effectId)
+        .then(function (loaded) {
+          state.anim._effectAtlasImage = loaded.atlas;
+          startPlay();
+        })
+        .catch(function (err) {
+          state.anim.playing = false;
+          updateAnimButtons();
+          setAnimStatus((err && err.message) || "特效加载失败", "error");
+        });
+      return;
+    }
+    startPlay();
   }
 
   function appendFlowNode(parent, kind, text) {
@@ -725,6 +1243,7 @@
     btn.textContent = seq.id;
     btn.title = SlotBoardConfig.formatLinkLabel(state.config, seq);
     btn.addEventListener("click", function () {
+      persistActiveSequenceEdits();
       state.anim.activeSequenceId = seq.id;
       loadSequenceToState(seq);
       syncAnimLinkSelect();
@@ -818,7 +1337,17 @@
     state.anim.playing = true;
     updateAnimButtons();
     setFlowStatus("播放连通链 · " + chain.length + " 段…", "playing");
-    var animChain = window.SlotBoardAnim.Director.playChain(chain, state.config, makeAnimHooks());
+    if (window.SBTrace) {
+      window.SBTrace.log("editor", "playFlowPreview", {
+        chainLength: chain.length,
+        startFrameId: startId,
+      });
+    }
+    var animChain = window.SlotBoardAnim.Director.playChain(
+      chain,
+      state.config,
+      makeAnimHooks({ mode: "flow", startFrameId: startId })
+    );
     state.anim.currentAnim = animChain;
     animChain
       .then(function () {
@@ -842,18 +1371,164 @@
       });
   }
 
+  function effectIdForPreset() {
+    return (state.effectCatalog[0] && state.effectCatalog[0].id) || "bingo_frame";
+  }
+
+  function detectSequencePreset(steps) {
+    if (!steps || !steps.length) return "swapWave";
+    if (steps.length === 1 && steps[0].type === "boardEliminate") return "eliminateWave";
+    for (var i = 0; i < steps.length; i++) {
+      if (steps[i].type === "boardEliminate") return "eliminateWave";
+    }
+    return "swapWave";
+  }
+
+  function presetLabel(presetId) {
+    if (presetId === "eliminateWave") return "消除 (序列帧)";
+    return "换盘 (滚出+滚入)";
+  }
+
+  function editorStepsFromPreset(presetId, fromFrameId, toFrameId) {
+    var seq = SlotBoardConfig.createSequenceFromPreset(
+      fromFrameId,
+      toFrameId,
+      presetId,
+      effectIdForPreset()
+    );
+    return seq.steps.map(function (step, index) {
+      var normalized = normalizeEditorAnimStep(
+        {
+          id: step.id || "s" + (index + 1),
+          type: step.type,
+          fromFrameId: step.fromFrameId,
+          toFrameId: step.toFrameId,
+          params: step.params,
+        },
+        index
+      );
+      if (window.SlotBoardAnim && window.SlotBoardAnim.pickTemplateParams) {
+        normalized.params = window.SlotBoardAnim.pickTemplateParams(
+          normalized.type,
+          normalized.params || templateDefaultParams(normalized.type)
+        );
+      }
+      return normalized;
+    });
+  }
+
+  function getCurrentLinkFramePair() {
+    var ends = SlotBoardConfig.getSequenceEndpoints({ steps: state.anim.steps });
+    if (ends.fromFrameId && ends.toFrameId) {
+      return { fromFrameId: ends.fromFrameId, toFrameId: ends.toFrameId };
+    }
+    if (!state.config || !state.config.frames.length) return null;
+    var fromId = state.config.frames[0].id;
+    var toId =
+      state.config.frames.length > 1 ? state.config.frames[1].id : fromId;
+    var step = getActiveStep();
+    if (step && step.fromFrameId) fromId = step.fromFrameId;
+    if (step && step.toFrameId) toId = step.toFrameId;
+    return { fromFrameId: fromId, toFrameId: toId };
+  }
+
+  function syncAnimLinkPresetUi() {
+    if (!els.animLinkPreset) return;
+    els.animLinkPreset.value = detectSequencePreset(state.anim.steps);
+  }
+
+  function applyPresetToWorkingSteps(presetId, persist) {
+    var pair = getCurrentLinkFramePair();
+    if (!pair || !pair.fromFrameId || !pair.toFrameId) {
+      alert("无法确定 from / to 帧");
+      return false;
+    }
+    if (pair.fromFrameId === pair.toFrameId) {
+      alert("from / to 帧不能相同");
+      return false;
+    }
+    state.anim.steps = editorStepsFromPreset(
+      presetId,
+      pair.fromFrameId,
+      pair.toFrameId
+    );
+    state.anim.activeStepIndex = 0;
+    state.anim.pickEliminateCells = false;
+    ensureAnimDefaults();
+    syncAnimEditModeUi();
+    if (persist && state.anim.activeSequenceId) {
+      var builtSteps = state.anim.steps.map(function (s, i) {
+        return buildStepFromState(s, i);
+      });
+      state.config = SlotBoardConfig.upsertSequence(state.config, {
+        id: state.anim.activeSequenceId,
+        name: SlotBoardConfig.formatLinkLabel(state.config, { steps: builtSteps }),
+        steps: builtSteps,
+      });
+      saveDraft();
+      syncAnimLinkSelect();
+      syncFlowPanel();
+    }
+    syncAnimLinkPresetUi();
+    if (state.runtime) {
+      state.runtime.setViewOptions(getRuntimeViewOptions());
+    }
+    return true;
+  }
+
+  function onAnimLinkPresetChange() {
+    if (!state.config || !els.animLinkPreset) return;
+    var preset = els.animLinkPreset.value || "swapWave";
+    var current = detectSequencePreset(state.anim.steps);
+    if (preset === current) return;
+
+    if (
+      state.anim.activeSequenceId &&
+      !confirm(
+        "将当前实例改为「" +
+          presetLabel(preset) +
+          "」？原有步骤与参数会被替换。"
+      )
+    ) {
+      els.animLinkPreset.value = current;
+      return;
+    }
+
+    if (
+      applyPresetToWorkingSteps(preset, !!state.anim.activeSequenceId)
+    ) {
+      setAnimStatus("已切换为「" + presetLabel(preset) + "」");
+    } else {
+      els.animLinkPreset.value = current;
+    }
+  }
+
   function onAddAnimLink() {
     if (!state.config) return;
     try {
+      persistActiveSequenceEdits();
       var pair = SlotBoardConfig.suggestNextLinkFrames(state.config);
       if (!pair) {
         alert("没有可用的帧对新建实例（每帧至多一个起点/终点）");
         return;
       }
-      readCurrentBlockFromUi();
-      var seq = SlotBoardConfig.createDefaultWaveSequence(pair.fromFrameId, pair.toFrameId);
+      var preset =
+        els.animLinkPreset && els.animLinkPreset.value
+          ? els.animLinkPreset.value
+          : "swapWave";
+      var effectId =
+        state.effectCatalog[0] && state.effectCatalog[0].id
+          ? state.effectCatalog[0].id
+          : "bingo_frame";
+      var seq = SlotBoardConfig.createSequenceFromPreset(
+        pair.fromFrameId,
+        pair.toFrameId,
+        preset,
+        effectId
+      );
       state.config = SlotBoardConfig.upsertSequence(state.config, seq);
-      state.anim.activeSequenceId = seq.id;
+      state.anim.activeSequenceId =
+        state.config.sequences[state.config.sequences.length - 1].id;
       saveDraft();
       loadSequenceToState(
         SlotBoardConfig.getSequence(state.config, seq.id) || state.config.sequences[state.config.sequences.length - 1]
@@ -877,8 +1552,10 @@
       state.anim.activeSequenceId = state.config.sequences[0].id;
       loadSequenceToState(state.config.sequences[0]);
     } else {
-      ensureAnimDefaults();
-      writeCurrentBlockToUi();
+      state.anim.steps = [];
+      state.anim.activeStepIndex = 0;
+      ensureAnimSteps();
+      syncAnimEditModeUi();
     }
     syncAnimLinkSelect();
     syncAnimEditModeUi();
@@ -889,8 +1566,8 @@
   function onAnimLinkChange() {
     if (!els.animLinkSelect || !state.config) return;
     var id = els.animLinkSelect.value;
-    if (!id) return;
-    readCurrentBlockFromUi();
+    if (!id || id === state.anim.activeSequenceId) return;
+    persistActiveSequenceEdits();
     state.anim.activeSequenceId = id;
     var seq = SlotBoardConfig.getSequence(state.config, id);
     if (seq) loadSequenceToState(seq);
@@ -901,50 +1578,119 @@
   }
 
   function onAnimTemplateChange() {
-    var block = getAnimBlock(state.anim.editMode);
-    block.type = els.animTemplate.value;
-    block.params = templateDefaultParams(block.type);
+    var step = getActiveStep();
+    step.type = els.animTemplate.value;
+    step.params = templateDefaultParams(step.type);
     syncAnimParamUi();
+    syncAnimFrameSelect();
     writeCurrentBlockToUi();
     saveAnimParams();
     setAnimStatus(formatAnimReadyLabel());
   }
 
-  function onAnimParamInput() {
-    readCurrentBlockFromUi();
-  }
-
   function onAnimFrameChange() {
     if (!els.animFrame || !state.config) return;
+    var step = getActiveStep();
+    var binding = getStepBinding(step.type);
     var value = els.animFrame.value;
     var excludeId = state.anim.activeSequenceId;
-    if (state.anim.editMode === "exit") {
-      var fromConflict = SlotBoardConfig.findSequenceByFromFrame(state.config, value, excludeId);
+    if (binding === "exit" || binding === "eliminate" || binding === "cascade") {
+      var fromConflict = SlotBoardConfig.findSequenceByFromFrame(
+        state.config,
+        value,
+        excludeId
+      );
       if (fromConflict) {
         alert("帧 " + value + " 已被实例 " + fromConflict.id + " 作为起点占用");
         writeCurrentBlockToUi();
         return;
       }
-      if (value === state.anim.enter.toFrameId) {
-        alert("from 帧不能与 to 帧相同");
-        writeCurrentBlockToUi();
-        return;
-      }
-    } else {
-      var toConflict = SlotBoardConfig.findSequenceByToFrame(state.config, value, excludeId);
+    }
+    if (binding === "enter") {
+      var toConflict = SlotBoardConfig.findSequenceByToFrame(
+        state.config,
+        value,
+        excludeId
+      );
       if (toConflict) {
         alert("帧 " + value + " 已被实例 " + toConflict.id + " 作为终点占用");
         writeCurrentBlockToUi();
         return;
       }
-      if (value === state.anim.exit.fromFrameId) {
-        alert("to 帧不能与 from 帧相同");
-        writeCurrentBlockToUi();
-        return;
-      }
     }
     readCurrentBlockFromUi();
+    syncEliminatePanel();
+    syncBoardToAnimStepFrame();
     setAnimStatus(formatAnimReadyLabel());
+  }
+
+  function onAnimFrameToChange() {
+    if (!els.animFrameTo || !state.config) return;
+    readCurrentBlockFromUi();
+    syncEliminatePanel();
+    setAnimStatus(formatAnimReadyLabel());
+  }
+
+  function onRefreshEliminateDiff() {
+    var step = getActiveStep();
+    if (!step || step.type !== "boardEliminate") return;
+    step.params.cells = "diff";
+    step.params.cellList = [];
+    writeCurrentBlockToUi();
+    setAnimStatus("已从帧差分刷新消除格");
+  }
+
+  function onTogglePickEliminateCells() {
+    var step = getActiveStep();
+    if (!step || step.type !== "boardEliminate") return;
+    state.anim.pickEliminateCells = !state.anim.pickEliminateCells;
+    if (state.anim.pickEliminateCells) {
+      step.params.cells = "explicit";
+      if (!Array.isArray(step.params.cellList)) step.params.cellList = [];
+    }
+    syncEliminatePanel();
+    if (state.runtime) state.runtime.setViewOptions(getRuntimeViewOptions());
+    setAnimStatus(
+      state.anim.pickEliminateCells
+        ? formatEliminatePickStatus(step.params.cellList)
+        : formatAnimReadyLabel()
+    );
+    syncBoardToAnimStepFrame();
+  }
+
+  function onAnimEliminateCellClick(col, row) {
+    var step = getActiveStep();
+    if (!step || step.type !== "boardEliminate" || !state.anim.pickEliminateCells) return;
+    if (!Array.isArray(step.params.cellList)) step.params.cellList = [];
+    var list = step.params.cellList;
+    var idx = -1;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].col === col && list[i].row === row) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx >= 0) list.splice(idx, 1);
+    else list.push({ col: col, row: row });
+    step.params.cells = "explicit";
+    syncEliminatePanel();
+    saveAnimParams();
+    refreshRuntimeView();
+    setAnimStatus(
+      (idx >= 0 ? "已取消 " : "已标记 ") +
+        "c" +
+        (col + 1) +
+        "r" +
+        (row + 1) +
+        " · " +
+        formatEliminatePickStatus(list)
+    );
+  }
+
+  function onAnimParamInput() {
+    readCurrentBlockFromUi();
+    syncEliminatePanel();
+    syncEliminateHideOffsetUi();
   }
 
   function getActiveFrame() {
@@ -1258,20 +2004,47 @@
     els.metaDimsVal.textContent = state.config.board.cols + " × " + state.config.board.rows;
   }
 
+  function switchGroup(groupId) {
+    if (!TAB_GROUPS[groupId]) return;
+    var tabs = TAB_GROUPS[groupId].tabs;
+    var target =
+      tabs.indexOf(state.activeTab) >= 0 ? state.activeTab : tabs[0];
+    state.activeGroup = groupId;
+    switchTab(target);
+  }
+
+  function syncTabNavUi() {
+    if (els.mainTabs) {
+      els.mainTabs.forEach(function (btn) {
+        btn.classList.toggle("active", btn.dataset.group === state.activeGroup);
+      });
+    }
+    if (els.subTabNavs) {
+      els.subTabNavs.forEach(function (nav) {
+        nav.classList.toggle("hidden", nav.dataset.group !== state.activeGroup);
+      });
+    }
+    if (els.subTabs) {
+      els.subTabs.forEach(function (btn) {
+        btn.classList.toggle("active", btn.dataset.tab === state.activeTab);
+      });
+    }
+  }
+
   function switchTab(tabId) {
     if (TAB_IDS.indexOf(tabId) < 0) return;
     if ((state.activeTab === "anim" || state.activeTab === "flow") && tabId !== "anim" && tabId !== "flow") {
       stopAnimPreview(false);
     }
     state.activeTab = tabId;
-    els.subTabs.forEach(function (btn) {
-      btn.classList.toggle("active", btn.dataset.tab === tabId);
-    });
+    state.activeGroup = TAB_GROUP_FOR[tabId] || state.activeGroup;
+    syncTabNavUi();
     TAB_IDS.forEach(function (id) {
       $("tab-" + id).classList.toggle("hidden", id !== tabId);
     });
     if (tabId === "anim") {
       syncAnimPanel();
+      syncBoardToAnimStepFrame();
       refreshRuntimeView();
       if (state.runtime) state.runtime.redraw(getAnimDrawState());
     }
@@ -1279,6 +2052,13 @@
       syncFlowPanel();
       refreshRuntimeView();
       if (state.runtime) state.runtime.redraw(getAnimDrawState());
+    }
+    if (tabId === "fxlib") {
+      renderEffectLibrary();
+    }
+    if (tabId === "anim") {
+      syncEliminatePanel();
+      if (state.runtime) state.runtime.setViewOptions(getRuntimeViewOptions());
     }
   }
 
@@ -1540,6 +2320,259 @@
     });
   }
 
+  function loadEffectCatalog(done) {
+    fetch("/effects/index.json")
+      .then(function (res) {
+        return res.json();
+      })
+      .then(function (list) {
+        state.effectCatalog = Array.isArray(list) ? list : [];
+        updateEffectCatalogHint();
+        renderEffectLibrary();
+        if (state.activeTab === "anim" || state.activeTab === "fxlib") {
+          syncEffectIdOptions();
+          syncEliminatePanel();
+        }
+        if (done) done();
+      })
+      .catch(function () {
+        state.effectCatalog = [];
+        updateEffectCatalogHint();
+        renderEffectLibrary();
+        if (state.activeTab === "anim" || state.activeTab === "fxlib") {
+          syncEffectIdOptions();
+          syncEliminatePanel();
+        }
+        if (done) done();
+      });
+  }
+
+  function updateEffectCatalogHint() {
+    var n = state.effectCatalog.length;
+    if (els.fxLibCount) els.fxLibCount.textContent = String(n);
+  }
+
+  function setFxImportStatus(message, isError) {
+    if (!els.fxImportStatus) return;
+    if (!message) {
+      els.fxImportStatus.classList.add("hidden");
+      els.fxImportStatus.textContent = "";
+      return;
+    }
+    els.fxImportStatus.textContent = message;
+    els.fxImportStatus.classList.remove("hidden");
+    els.fxImportStatus.classList.toggle("error", !!isError);
+  }
+
+  function uploadEffectFile(file) {
+    var contentType = file.type || "application/octet-stream";
+    if (/\.json$/i.test(file.name)) contentType = "application/json";
+    else if (/\.webp$/i.test(file.name)) contentType = "image/webp";
+    else if (/\.png$/i.test(file.name)) contentType = "image/png";
+    else if (/\.jpe?g$/i.test(file.name)) contentType = "image/jpeg";
+
+    return fetch("/effects/upload?name=" + encodeURIComponent(file.name), {
+      method: "POST",
+      headers: { "Content-Type": contentType },
+      body: file,
+    }).then(function (res) {
+      return res.text().then(function (text) {
+        var data;
+        try {
+          data = JSON.parse(text);
+        } catch (parseErr) {
+          if (res.status === 405 || res.status === 404) {
+            throw new Error(
+              "服务端未启用序列帧 API（" +
+                res.status +
+                "）。请重启：npm run slot-board:editor"
+            );
+          }
+          throw new Error(res.status + ": " + text.slice(0, 120));
+        }
+        if (!res.ok || !data.ok) {
+          throw new Error((data && data.error) || "上传失败");
+        }
+        return data;
+      });
+    });
+  }
+
+  function importEffectFiles(fileList) {
+    var files = Array.prototype.slice.call(fileList || []).filter(function (f) {
+      return (
+        /\.json$/i.test(f.name) ||
+        /\.png$/i.test(f.name) ||
+        /\.webp$/i.test(f.name) ||
+        /\.jpe?g$/i.test(f.name) ||
+        f.type === "application/json" ||
+        /^image\//.test(f.type || "")
+      );
+    });
+    if (!files.length) {
+      setFxImportStatus("请选择 JSON / PNG / WebP 文件", true);
+      return Promise.resolve();
+    }
+
+    setFxImportStatus("正在导入 " + files.length + " 个文件…", false);
+    var chain = Promise.resolve();
+    var imported = [];
+    var errors = [];
+
+    files.forEach(function (file) {
+      chain = chain.then(function () {
+        return uploadEffectFile(file)
+          .then(function (data) {
+            imported.push(data.name);
+          })
+          .catch(function (e) {
+            errors.push(file.name + ": " + e.message);
+          });
+      });
+    });
+
+    return chain.then(function () {
+      return loadEffectCatalog(function () {
+        if (errors.length) {
+          setFxImportStatus(
+            "成功 " + imported.length + "，失败 " + errors.length + "：" + errors.join("；"),
+            true
+          );
+        } else {
+          setFxImportStatus("已导入 " + imported.length + " 个：" + imported.join(", "), false);
+        }
+      });
+    });
+  }
+
+  function deleteEffect(id) {
+    if (!id) return;
+    if (!confirm("删除序列帧 " + id + " 及其关联资源？")) return;
+
+    fetch("/effects/delete?id=" + encodeURIComponent(id), { method: "DELETE" })
+      .then(function (res) {
+        return res.json().then(function (data) {
+          if (!res.ok || !data.ok) throw new Error((data && data.error) || "删除失败");
+          return data;
+        });
+      })
+      .then(function () {
+        return loadEffectCatalog(function () {
+          setFxImportStatus("已删除 " + id, false);
+        });
+      })
+      .catch(function (e) {
+        setFxImportStatus(e.message, true);
+      });
+  }
+
+  function renderEffectLibrary() {
+    if (!els.effectLibrary) return;
+    els.effectLibrary.innerHTML = "";
+
+    if (!state.effectCatalog.length) {
+      var empty = document.createElement("p");
+      empty.className = "muted-note";
+      empty.textContent = "暂无序列帧，请导入 manifest 与 atlas/anim 资源。";
+      els.effectLibrary.appendChild(empty);
+      return;
+    }
+
+    state.effectCatalog.forEach(function (entry) {
+      var item = document.createElement("div");
+      item.className = "sym-lib-item";
+
+      var thumb = document.createElement("div");
+      thumb.className = "sym-lib-thumb";
+      if (entry.thumb) {
+        var img = document.createElement("img");
+        img.src = "/effects/" + encodeURIComponent(entry.thumb);
+        img.alt = entry.id;
+        img.addEventListener("error", function () {
+          thumb.textContent = "—";
+        });
+        thumb.appendChild(img);
+      } else {
+        thumb.textContent = "—";
+      }
+
+      var meta = document.createElement("div");
+      meta.className = "sym-lib-meta";
+      var title = document.createElement("div");
+      title.className = "sym-lib-name mono";
+      title.textContent = entry.id;
+      meta.appendChild(title);
+
+      var detail = document.createElement("div");
+      detail.className = "fx-lib-detail";
+      var detailParts = [];
+      if (entry.frameCount) detailParts.push(entry.frameCount + " 帧");
+      if (entry.fps) detailParts.push(entry.fps + " fps");
+      if (entry.cellW && entry.cellH) detailParts.push(entry.cellW + "×" + entry.cellH);
+      detail.textContent = detailParts.length ? detailParts.join(" · ") : entry.name || "—";
+      meta.appendChild(detail);
+
+      if (!entry.thumb) {
+        var missing = document.createElement("div");
+        missing.className = "fx-lib-missing";
+        missing.textContent = "缺少 atlas/anim 预览图";
+        meta.appendChild(missing);
+      }
+
+      var actions = document.createElement("div");
+      actions.className = "sym-lib-actions";
+      var delBtn = document.createElement("button");
+      delBtn.type = "button";
+      delBtn.className = "btn ghost sym-lib-del";
+      delBtn.textContent = "删除";
+      delBtn.addEventListener("click", function () {
+        deleteEffect(entry.id);
+      });
+      actions.appendChild(delBtn);
+
+      item.appendChild(thumb);
+      item.appendChild(meta);
+      item.appendChild(actions);
+      els.effectLibrary.appendChild(item);
+    });
+  }
+
+  function bindEffectImportUi() {
+    function openPicker() {
+      if (els.fileImportEffects) els.fileImportEffects.click();
+    }
+
+    if (els.btnImportEffects) els.btnImportEffects.addEventListener("click", openPicker);
+    if (els.fileImportEffects) {
+      els.fileImportEffects.addEventListener("change", function (e) {
+        var files = e.target.files;
+        if (files && files.length) importEffectFiles(files);
+        e.target.value = "";
+      });
+    }
+
+    var dropZone = els.fxDropZone;
+    if (!dropZone) return;
+
+    ["dragenter", "dragover"].forEach(function (ev) {
+      dropZone.addEventListener(ev, function (e) {
+        e.preventDefault();
+        dropZone.classList.add("dragover");
+      });
+    });
+    ["dragleave", "drop"].forEach(function (ev) {
+      dropZone.addEventListener(ev, function (e) {
+        e.preventDefault();
+        dropZone.classList.remove("dragover");
+      });
+    });
+    dropZone.addEventListener("drop", function (e) {
+      if (e.dataTransfer && e.dataTransfer.files) {
+        importEffectFiles(e.dataTransfer.files);
+      }
+    });
+  }
+
   function bindSymbolImportUi() {
     function openPicker() {
       if (els.fileImportSymbols) els.fileImportSymbols.click();
@@ -1783,6 +2816,7 @@
     state.config = null;
     state.runtime = null;
     state.activeTab = "basic";
+    state.activeGroup = "project";
     state.selectedCell = null;
     els.boardHost.innerHTML = "";
     els.previewSize.classList.add("hidden");
@@ -1800,6 +2834,7 @@
         rows: rows,
       });
       state.activeTab = "layout";
+      state.activeGroup = "board";
       openConfig(config);
     } catch (e) {
       alert(e.message);
@@ -1869,6 +2904,8 @@
     els.modeBadge = $("mode-badge");
     els.panelCreate = $("panel-create");
     els.panelManage = $("panel-manage");
+    els.mainTabs = Array.prototype.slice.call(document.querySelectorAll(".main-tab"));
+    els.subTabNavs = Array.prototype.slice.call(document.querySelectorAll(".sub-tabs"));
     els.subTabs = Array.prototype.slice.call(document.querySelectorAll(".sub-tab"));
     els.createName = $("create-name");
     els.createCols = $("create-cols");
@@ -1895,11 +2932,25 @@
     els.btnImportSymbols = $("btn-import-symbols");
     els.btnImportSymbolsCreate = $("btn-import-symbols-create");
     els.fileImportSymbols = $("file-import-symbols");
+    els.effectLibrary = $("effect-library");
+    els.fxLibCount = $("fx-lib-count");
+    els.fxDropZone = $("fx-drop-zone");
+    els.fxImportStatus = $("fx-import-status");
+    els.btnImportEffects = $("btn-import-effects");
+    els.fileImportEffects = $("file-import-effects");
     els.frameList = $("frame-list");
     els.boardFrameLabel = $("board-frame-label");
     els.btnFrameAdd = $("btn-frame-add");
     els.btnFrameDup = $("btn-frame-dup");
-    els.animModeTabs = Array.prototype.slice.call(document.querySelectorAll(".anim-mode"));
+    els.animStepTabs = $("anim-step-tabs");
+    els.animLinkPreset = $("anim-link-preset");
+    els.animFrameTo = $("anim-frame-to");
+    els.animFrameToWrap = $("anim-frame-to-wrap");
+    els.animEliminateExtra = $("anim-eliminate-extra");
+    els.animEliminateCellsSummary = $("anim-eliminate-cells-summary");
+    els.btnAnimRefreshDiff = $("btn-anim-refresh-diff");
+    els.btnAnimPickCells = $("btn-anim-pick-cells");
+    els.animParamEffectId = $("anim-param-effect-id");
     els.animTemplate = $("anim-template");
     els.animFrame = $("anim-frame");
     els.animFrameLabel = $("anim-frame-label");
@@ -1935,6 +2986,14 @@
     });
     $("btn-new").addEventListener("click", onNewConfig);
 
+    if (els.mainTabs) {
+      els.mainTabs.forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          switchGroup(btn.dataset.group);
+        });
+      });
+    }
+
     els.subTabs.forEach(function (btn) {
       btn.addEventListener("click", function () {
         switchTab(btn.dataset.tab);
@@ -1965,19 +3024,23 @@
     $("btn-clear-cell").addEventListener("click", clearSelectedCell);
     $("btn-clear-board").addEventListener("click", clearBoard);
     bindSymbolImportUi();
+    bindEffectImportUi();
 
-    if (els.animModeTabs) {
-      els.animModeTabs.forEach(function (btn) {
-        btn.addEventListener("click", function () {
-          switchAnimEditMode(btn.dataset.mode);
-        });
-      });
-    }
     if (els.animTemplate) els.animTemplate.addEventListener("change", onAnimTemplateChange);
     if (els.animFrame) els.animFrame.addEventListener("change", onAnimFrameChange);
+    if (els.animFrameTo) els.animFrameTo.addEventListener("change", onAnimFrameToChange);
+    if (els.btnAnimRefreshDiff) {
+      els.btnAnimRefreshDiff.addEventListener("click", onRefreshEliminateDiff);
+    }
+    if (els.btnAnimPickCells) {
+      els.btnAnimPickCells.addEventListener("click", onTogglePickEliminateCells);
+    }
     if (els.animLinkSelect) els.animLinkSelect.addEventListener("change", onAnimLinkChange);
     if (els.btnAnimLinkAdd) els.btnAnimLinkAdd.addEventListener("click", onAddAnimLink);
     if (els.btnAnimLinkDel) els.btnAnimLinkDel.addEventListener("click", onDeleteAnimLink);
+    if (els.animLinkPreset) {
+      els.animLinkPreset.addEventListener("change", onAnimLinkPresetChange);
+    }
     if (els.btnFlowPlay) els.btnFlowPlay.addEventListener("click", playFlowPreview);
     if (els.btnFlowStop) els.btnFlowStop.addEventListener("click", function () {
       stopAnimPreview(true);
@@ -2017,13 +3080,25 @@
     syncViewToggles();
     bindEvents();
 
+    if (window.SBTrace) {
+      window.SBTrace.log("editor", "boot", {
+        trace: window.SBTrace.isEnabled(),
+        remoteConsole: window.SlotBoardRemoteConsole
+          ? window.SlotBoardRemoteConsole.getSessionName()
+          : null,
+        url: typeof location !== "undefined" ? location.href : "",
+      });
+    }
+
     loadSymbolCatalog(function () {
-      var draft = loadDraft();
-      if (draft) {
-        openConfig(draft);
-      } else {
-        showMode("create");
-      }
+      loadEffectCatalog(function () {
+        var draft = loadDraft();
+        if (draft) {
+          openConfig(draft);
+        } else {
+          showMode("create");
+        }
+      });
     });
   }
 

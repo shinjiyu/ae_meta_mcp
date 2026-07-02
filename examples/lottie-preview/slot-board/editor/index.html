@@ -9,6 +9,7 @@
   <header class="app-header">
     <h1>Slot Board Editor</h1>
     <span id="mode-badge" class="badge">未打开配置</span>
+    <span id="rc-badge" class="badge hidden" title="Remote Console"></span>
   </header>
 
   <div class="app-body">
@@ -70,16 +71,32 @@
       </section>
 
       <section id="panel-manage" class="panel hidden">
-        <nav class="sub-tabs" role="tablist">
-          <button type="button" class="sub-tab active" data-tab="basic" role="tab">基础</button>
-          <button type="button" class="sub-tab" data-tab="layout" role="tab">布局</button>
-          <button type="button" class="sub-tab" data-tab="frames" role="tab">帧</button>
-          <button type="button" class="sub-tab" data-tab="board" role="tab">盘面</button>
-          <button type="button" class="sub-tab" data-tab="anim" role="tab">动画</button>
-          <button type="button" class="sub-tab" data-tab="flow" role="tab">流程</button>
-          <button type="button" class="sub-tab" data-tab="symlib" role="tab">符号库</button>
-          <button type="button" class="sub-tab" data-tab="file" role="tab">文件</button>
+        <nav class="main-tabs" role="tablist" aria-label="配置分类">
+          <button type="button" class="main-tab active" data-group="project" role="tab">工程</button>
+          <button type="button" class="main-tab" data-group="board" role="tab">盘面</button>
+          <button type="button" class="main-tab" data-group="anim" role="tab">动画</button>
+          <button type="button" class="main-tab" data-group="assets" role="tab">资源</button>
         </nav>
+
+        <div class="sub-tabs-wrap">
+          <nav class="sub-tabs" data-group="project" role="tablist" aria-label="工程">
+            <button type="button" class="sub-tab active" data-tab="basic" role="tab">基础</button>
+            <button type="button" class="sub-tab" data-tab="file" role="tab">文件</button>
+          </nav>
+          <nav class="sub-tabs hidden" data-group="board" role="tablist" aria-label="盘面">
+            <button type="button" class="sub-tab" data-tab="layout" role="tab">布局</button>
+            <button type="button" class="sub-tab" data-tab="frames" role="tab">帧</button>
+            <button type="button" class="sub-tab" data-tab="board" role="tab">盘面</button>
+          </nav>
+          <nav class="sub-tabs hidden" data-group="anim" role="tablist" aria-label="动画">
+            <button type="button" class="sub-tab" data-tab="anim" role="tab">动画</button>
+            <button type="button" class="sub-tab" data-tab="flow" role="tab">流程</button>
+          </nav>
+          <nav class="sub-tabs hidden" data-group="assets" role="tablist" aria-label="资源">
+            <button type="button" class="sub-tab" data-tab="symlib" role="tab">符号库</button>
+            <button type="button" class="sub-tab" data-tab="fxlib" role="tab">序列帧库</button>
+          </nav>
+        </div>
 
         <div id="tab-basic" class="tab-panel" role="tabpanel">
           <label>名称<input id="edit-name" type="text" maxlength="64" /></label>
@@ -142,22 +159,23 @@
         </div>
 
         <div id="tab-anim" class="tab-panel hidden" role="tabpanel">
-          <p class="desc">编辑<strong>动画实例</strong>（帧间链路）：选模板、配参数、预览单步。不在此编辑模板本身。</p>
+          <p class="desc">编辑<strong>动画实例</strong>：预设「消除」= 消除 + 重力下落两步；「换盘」= Exit + Enter。切换预设会替换当前实例步骤。</p>
 
           <div class="sym-section">
             <div class="sym-section-title">动画实例</div>
             <div class="anim-link-toolbar">
               <label>实例<select id="anim-link-select"></select></label>
+              <label>预设<select id="anim-link-preset">
+                <option value="swapWave">换盘 (滚出+滚入)</option>
+                <option value="eliminateWave">消除 (序列帧)</option>
+              </select></label>
               <button type="button" id="btn-anim-link-add" class="btn">新建</button>
               <button type="button" id="btn-anim-link-del" class="btn ghost">删除</button>
             </div>
             <p id="anim-link-endpoints" class="muted-note">—</p>
           </div>
 
-          <div class="anim-mode-tabs" role="tablist">
-            <button type="button" class="anim-mode active" data-mode="exit" role="tab">Exit</button>
-            <button type="button" class="anim-mode" data-mode="enter" role="tab">Enter</button>
-          </div>
+          <div id="anim-step-tabs" class="anim-mode-tabs" role="tablist"></div>
 
           <div class="sym-section">
             <div class="sym-section-title">模板与帧</div>
@@ -167,6 +185,18 @@
             <label id="anim-frame-wrap"><span id="anim-frame-label">from 帧</span>
               <select id="anim-frame"></select>
             </label>
+            <label id="anim-frame-to-wrap" class="hidden"><span>to 帧</span>
+              <select id="anim-frame-to"></select>
+            </label>
+          </div>
+
+          <div id="anim-eliminate-extra" class="sym-section hidden">
+            <div class="sym-section-title">消除格</div>
+            <p id="anim-eliminate-cells-summary" class="muted-note">—</p>
+            <div class="btn-row">
+              <button type="button" id="btn-anim-refresh-diff" class="btn">从帧差分刷新</button>
+              <button type="button" id="btn-anim-pick-cells" class="btn ghost">盘面点选</button>
+            </div>
           </div>
 
           <div class="sym-section">
@@ -223,6 +253,68 @@
                 <input type="checkbox" checked />
                 <span class="anim-param-label">入场淡入</span>
               </label>
+              <label class="anim-param-field" data-param-key="effectId">
+                <span class="anim-param-label">序列帧</span>
+                <select id="anim-param-effect-id"></select>
+              </label>
+              <label class="anim-param-field" data-param-key="cells">
+                <span class="anim-param-label">目标格</span>
+                <select>
+                  <option value="diff">帧差分</option>
+                  <option value="explicit">手动点选</option>
+                </select>
+              </label>
+              <label class="anim-param-field" data-param-key="cols">
+                <span class="anim-param-label">列范围</span>
+                <select>
+                  <option value="affected">有消除的列</option>
+                  <option value="all">整盘</option>
+                </select>
+              </label>
+              <label class="anim-param-field" data-param-key="anchor">
+                <span class="anim-param-label">锚点</span>
+                <select>
+                  <option value="cellCenter">格心</option>
+                  <option value="cellTopLeft">格左上</option>
+                  <option value="cellBottomCenter">格底中</option>
+                </select>
+              </label>
+              <label class="anim-param-field" data-param-key="offsetX">
+                <span class="anim-param-label">偏移 X</span>
+                <input type="number" min="-200" max="200" step="1" value="0" />
+              </label>
+              <label class="anim-param-field" data-param-key="offsetY">
+                <span class="anim-param-label">偏移 Y</span>
+                <input type="number" min="-200" max="200" step="1" value="0" />
+              </label>
+              <label class="anim-param-field" data-param-key="scale">
+                <span class="anim-param-label">缩放</span>
+                <input type="number" min="0.1" max="3" step="0.05" value="1" />
+              </label>
+              <label class="anim-param-field" data-param-key="stagger">
+                <span class="anim-param-label">格交错 (s)</span>
+                <input type="number" min="0" max="1" step="0.01" value="0.06" />
+              </label>
+              <label class="anim-param-field" data-param-key="rowOrder">
+                <span class="anim-param-label">行顺序</span>
+                <select>
+                  <option value="bottomFirst">自下而上</option>
+                  <option value="topFirst">自上而下</option>
+                  <option value="simultaneous">同时</option>
+                </select>
+              </label>
+              <label class="anim-param-field" data-param-key="hideSymbolAt">
+                <span class="anim-param-label">symbol 隐藏</span>
+                <select>
+                  <option value="effectEnd">特效结束</option>
+                  <option value="effectStart">特效开始</option>
+                  <option value="timeOffset">时间偏移</option>
+                </select>
+              </label>
+              <label class="anim-param-field hidden" data-param-key="hideSymbolOffset">
+                <span class="anim-param-label">隐藏偏移 (s)</span>
+                <input type="number" min="0" max="3" step="0.01" value="0" />
+              </label>
             </div>
           </div>
 
@@ -261,6 +353,21 @@
           </div>
         </div>
 
+        <div id="tab-fxlib" class="tab-panel hidden" role="tabpanel">
+          <p class="desc">导入序列帧 manifest（JSON）及 atlas / anim 资源，写入 <code>examples/effects/</code>，供消除特效等 runtime 引用。</p>
+          <div id="fx-drop-zone" class="sym-drop-zone" tabindex="0">
+            <span>拖放 JSON / PNG / WebP 到此处</span>
+            <span class="muted">或</span>
+            <button type="button" id="btn-import-effects" class="btn primary">选择文件…</button>
+          </div>
+          <p id="fx-import-status" class="import-status hidden"></p>
+          <div class="sym-section">
+            <div class="sym-section-title">已导入 (<span id="fx-lib-count">0</span>)</div>
+            <div id="effect-library" class="symbol-library"></div>
+          </div>
+          <input id="file-import-effects" type="file" accept=".json,image/png,image/webp,image/jpeg" multiple hidden />
+        </div>
+
         <div id="tab-file" class="tab-panel hidden" role="tabpanel">
           <p class="desc">导出 JSON 供 runtime / playable 使用；导入会合并当前行列锁定的配置。</p>
           <div class="btn-row">
@@ -274,6 +381,8 @@
     </aside>
   </div>
 
+  <script src="/runtime/debug/sbTrace.js"></script>
+  <script src="/runtime/debug/remoteConsole.js"></script>
   <script src="/runtime/config.js"></script>
   <script src="/runtime/anim/easing.js"></script>
   <script src="/runtime/anim/IAnim.js"></script>
@@ -283,6 +392,9 @@
   <script src="/runtime/anim/index.js"></script>
   <script src="/runtime/anim/dropOut.js"></script>
   <script src="/runtime/anim/dropIn.js"></script>
+  <script src="/runtime/anim/effectLoader.js"></script>
+  <script src="/runtime/anim/eliminate.js"></script>
+  <script src="/runtime/anim/cascadeDrop.js"></script>
   <script src="/runtime/anim/AnimTemplates.js"></script>
   <script src="/runtime/anim/Director.js"></script>
   <script src="/runtime/board.js"></script>

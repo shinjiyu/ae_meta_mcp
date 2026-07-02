@@ -37,7 +37,20 @@
   var MAX_SEQUENCES = 16;
   var MAX_STEPS = 8;
 
-  var VALID_STEP_TYPES = ["boardDropOut", "boardDropIn"];
+  var VALID_STEP_TYPES = ["boardDropOut", "boardDropIn", "boardEliminate", "boardCascadeDrop"];
+
+  var LINK_PRESETS = {
+    swapWave: {
+      id: "swapWave",
+      label: "换盘 (滚出+滚入)",
+      steps: ["boardDropOut", "boardDropIn"],
+    },
+    eliminateWave: {
+      id: "eliminateWave",
+      label: "消除 (序列帧)",
+      steps: ["boardEliminate", "boardCascadeDrop"],
+    },
+  };
 
   function deepClone(obj) {
     return JSON.parse(JSON.stringify(obj));
@@ -241,7 +254,75 @@
     if (out.type === "boardDropIn" && !out.toFrameId) {
       throw new Error("step " + out.id + ": boardDropIn 需要 toFrameId");
     }
+    if (out.type === "boardEliminate" && !out.fromFrameId) {
+      throw new Error("step " + out.id + ": boardEliminate 需要 fromFrameId");
+    }
+    if (out.type === "boardCascadeDrop" && !out.fromFrameId) {
+      throw new Error("step " + out.id + ": boardCascadeDrop 需要 fromFrameId");
+    }
+    if (out.type === "boardCascadeDrop" && !out.toFrameId) {
+      throw new Error("step " + out.id + ": boardCascadeDrop 需要 toFrameId");
+    }
     return out;
+  }
+
+  /** from 有 symbol、to 变 null 的格 */
+  function computeEliminateCells(config, step) {
+    var params = (step && step.params) || {};
+    if (params.cells === "explicit" && Array.isArray(params.cellList) && params.cellList.length) {
+      return params.cellList.map(function (cell) {
+        return { col: Number(cell.col), row: Number(cell.row) };
+      });
+    }
+    var fromId = step.fromFrameId;
+    var toId = step.toFrameId;
+    if (!fromId || !toId) return [];
+    var fromFrame = getFrame(config, fromId);
+    var toFrame = getFrame(config, toId);
+    if (!fromFrame || !toFrame) return [];
+    var cols = config.board.cols;
+    var rows = config.board.rows;
+    var out = [];
+    for (var r = 0; r < rows; r++) {
+      for (var c = 0; c < cols; c++) {
+        var before = fromFrame.grid[r] ? fromFrame.grid[r][c] : null;
+        var after = toFrame.grid[r] ? toFrame.grid[r][c] : null;
+        if (before && !after) out.push({ col: c, row: r });
+      }
+    }
+    return out;
+  }
+
+  function findPriorStepOfType(steps, stepIndex, type) {
+    if (!steps || stepIndex == null || stepIndex <= 0) return null;
+    for (var i = stepIndex - 1; i >= 0; i--) {
+      if (steps[i] && steps[i].type === type) return steps[i];
+    }
+    return null;
+  }
+
+  /** 下落步骤：消除格来自前序 boardEliminate（含手动点选），否则回退帧差分 */
+  function getEliminateCellsForCascade(config, cascadeStep, eliminateStep) {
+    if (eliminateStep && eliminateStep.type === "boardEliminate") {
+      return computeEliminateCells(config, eliminateStep);
+    }
+    return computeEliminateCells(config, {
+      fromFrameId: cascadeStep.fromFrameId,
+      toFrameId: cascadeStep.toFrameId,
+      params: { cells: "diff" },
+    });
+  }
+
+  /** from 帧盘面，去掉消除格后的网格（下落初始态） */
+  function configWithPostEliminateGrid(config, frameId, eliminatedCells) {
+    var cfg = deepClone(config);
+    var frame = getFrame(cfg, frameId);
+    if (!frame) throw new Error("找不到帧: " + frameId);
+    cfg.grid = deepClone(frame.grid);
+    (eliminatedCells || []).forEach(function (cell) {
+      if (cfg.grid[cell.row]) cfg.grid[cell.row][cell.col] = null;
+    });
+    return cfg;
   }
 
   function normalizeSequences(cfg) {
@@ -352,18 +433,43 @@
     return chain;
   }
 
-  /** 建议新建实例可用的 from / to 帧对 */
+  /** 建议新建实例可用的 from / to 帧对（优先沿首帧主链向后延伸） */
   function suggestNextLinkFrames(config, excludeSequenceId) {
     var frames = config.frames || [];
-    for (var i = 0; i < frames.length; i++) {
-      var fromId = frames[i].id;
-      if (findSequenceByFromFrame(config, fromId, excludeSequenceId)) continue;
-      for (var j = 0; j < frames.length; j++) {
-        if (i === j) continue;
+    if (frames.length < 2) return null;
+
+    function frameIndex(frameId) {
+      for (var i = 0; i < frames.length; i++) {
+        if (frames[i].id === frameId) return i;
+      }
+      return -1;
+    }
+
+    function tryPair(fromId) {
+      if (findSequenceByFromFrame(config, fromId, excludeSequenceId)) return null;
+      var fromIdx = frameIndex(fromId);
+      if (fromIdx < 0) return null;
+      for (var j = fromIdx + 1; j < frames.length; j++) {
         var toId = frames[j].id;
+        if (toId === fromId) continue;
         if (findSequenceByToFrame(config, toId, excludeSequenceId)) continue;
         return { fromFrameId: fromId, toFrameId: toId };
       }
+      return null;
+    }
+
+    var chain = buildChainFromFrame(config, frames[0].id);
+    var extendFrom = frames[0].id;
+    if (chain.length) {
+      var lastEnds = getSequenceEndpoints(chain[chain.length - 1]);
+      if (lastEnds.toFrameId) extendFrom = lastEnds.toFrameId;
+    }
+    var extended = tryPair(extendFrom);
+    if (extended) return extended;
+
+    for (var i = 0; i < frames.length; i++) {
+      var pair = tryPair(frames[i].id);
+      if (pair) return pair;
     }
     return null;
   }
@@ -419,10 +525,64 @@
     return cfg;
   }
 
+  function createDefaultEliminateSequence(fromFrameId, toFrameId, effectId) {
+    effectId = effectId || "bingo_frame";
+    return {
+      name: fromFrameId + " → " + toFrameId + " 消除",
+      steps: [
+        {
+          id: "s1",
+          type: "boardEliminate",
+          fromFrameId: fromFrameId,
+          toFrameId: toFrameId,
+          params: {
+            cells: "diff",
+            cellList: [],
+            effectId: effectId,
+            anchor: "cellCenter",
+            offsetX: 0,
+            offsetY: 0,
+            scale: 1,
+            stagger: 0.06,
+            colOrder: "leftFirst",
+            rowOrder: "bottomFirst",
+            hideSymbolAt: "effectEnd",
+            hideSymbolOffset: 0,
+            delayAfter: 0,
+          },
+        },
+        {
+          id: "s2",
+          type: "boardCascadeDrop",
+          fromFrameId: fromFrameId,
+          toFrameId: toFrameId,
+          params: {
+            cols: "affected",
+            fallDuration: 0.35,
+            rowStagger: 0.04,
+            colStagger: 0.06,
+            colOrder: "leftFirst",
+            order: "bottomFirst",
+            extraRisePx: 48,
+            easing: "easeOutQuad",
+            delayBefore: 0,
+          },
+        },
+      ],
+    };
+  }
+
+  function createSequenceFromPreset(fromFrameId, toFrameId, presetId, effectId) {
+    presetId = presetId || "swapWave";
+    if (presetId === "eliminateWave") {
+      return createDefaultEliminateSequence(fromFrameId, toFrameId, effectId);
+    }
+    return createDefaultWaveSequence(fromFrameId, toFrameId);
+  }
+
   function createDefaultWaveSequence(fromFrameId, toFrameId, enterType) {
     enterType = enterType || "boardDropIn";
     return {
-      id: newSequenceId([]),
       name: fromFrameId + " → " + toFrameId,
       steps: [
         {
@@ -731,6 +891,7 @@
     MAX_FRAMES: MAX_FRAMES,
     MAX_SEQUENCES: MAX_SEQUENCES,
     VALID_STEP_TYPES: VALID_STEP_TYPES,
+    LINK_PRESETS: LINK_PRESETS,
     createConfig: createConfig,
     normalizeConfig: normalizeConfig,
     computeBoardSize: computeBoardSize,
@@ -755,6 +916,12 @@
     upsertSequence: upsertSequence,
     deleteSequence: deleteSequence,
     createDefaultWaveSequence: createDefaultWaveSequence,
+    createDefaultEliminateSequence: createDefaultEliminateSequence,
+    createSequenceFromPreset: createSequenceFromPreset,
+    computeEliminateCells: computeEliminateCells,
+    findPriorStepOfType: findPriorStepOfType,
+    getEliminateCellsForCascade: getEliminateCellsForCascade,
+    configWithPostEliminateGrid: configWithPostEliminateGrid,
     normalizeSequences: normalizeSequences,
     getSequenceEndpoints: getSequenceEndpoints,
     findSequenceByFromFrame: findSequenceByFromFrame,

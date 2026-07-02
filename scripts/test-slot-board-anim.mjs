@@ -51,6 +51,9 @@ for (const file of [
   "index.js",
   "dropOut.js",
   "dropIn.js",
+  "effectLoader.js",
+  "eliminate.js",
+  "cascadeDrop.js",
   "AnimTemplates.js",
   "Director.js",
 ]) {
@@ -289,6 +292,12 @@ async function sleep(ms) {
     dupErr = e;
   }
   assert(dupErr && /起点占用/.test(dupErr.message), "reject duplicate from frame");
+
+  const cfgOne = SB.normalizeConfig(SB.deepClone(baseCfg));
+  cfgOne.sequences = [SB.createDefaultWaveSequence("f0", "f1")];
+  SB.normalizeSequences(cfgOne);
+  const next = SB.suggestNextLinkFrames(cfgOne);
+  assert(next && next.fromFrameId === "f1" && next.toFrameId === "f2", "suggest extends chain f1→f2");
 }
 
 // sequence director
@@ -337,6 +346,152 @@ async function sleep(ms) {
     onUpdate() {},
   });
   assert(stepsSeen === 2, "Director plays exit + enter steps");
+}
+
+// eliminate cells diff + validate
+{
+  const SB = sandbox.globalThis.SlotBoardConfig;
+  const cfg = SB.normalizeConfig({
+    version: 5,
+    id: "t",
+    name: "t",
+    createdAt: "2020-01-01T00:00:00.000Z",
+    board: {
+      cols: 3,
+      rows: 2,
+      locked: true,
+      layout: { symbolW: 10, symbolH: 10, colGap: 0, rowGap: 0, padding: 0 },
+    },
+    symbols: { cellFill: 0.9, scaleMul: {} },
+    activeFrameId: "f0",
+    frames: [
+      {
+        id: "f0",
+        name: "a",
+        grid: [
+          ["a.png", "b.png", null],
+          ["c.png", null, "d.png"],
+        ],
+      },
+      {
+        id: "f1",
+        name: "b",
+        grid: [
+          [null, "b.png", null],
+          ["c.png", null, null],
+        ],
+      },
+    ],
+    sequences: [],
+  });
+  const cells = SB.computeEliminateCells(cfg, {
+    fromFrameId: "f0",
+    toFrameId: "f1",
+    params: { cells: "diff" },
+  });
+  assert(cells.length === 2, "diff finds eliminated cells");
+  assert(cells.some(function (c) { return c.col === 0 && c.row === 0; }), "diff includes c1r1");
+  assert(cells.some(function (c) { return c.col === 2 && c.row === 1; }), "diff includes c3r2");
+
+  const seq = SB.createDefaultEliminateSequence("f0", "f1");
+  A.validateAnimStep(seq.steps[0], cfg);
+  assert(seq.steps[0].type === "boardEliminate", "eliminate sequence step type");
+
+  const preset = SB.createSequenceFromPreset("f0", "f1", "eliminateWave");
+  assert(preset.steps.length === 2, "eliminateWave preset has eliminate + cascade");
+  assert(preset.steps[0].type === "boardEliminate", "eliminate step first");
+  assert(preset.steps[1].type === "boardCascadeDrop", "cascade step second");
+
+  const picked = A.pickTemplateParams("boardEliminate", {
+    cells: "explicit",
+    cellList: [{ col: 1, row: 0 }, { col: 2, row: 1 }],
+    effectId: "bingo_frame",
+    anchor: "cellCenter",
+  });
+  assert(Array.isArray(picked.cellList) && picked.cellList.length === 2, "pickTemplateParams keeps cellList");
+  const explicitCells = SB.computeEliminateCells(cfg, {
+    fromFrameId: "f0",
+    toFrameId: "f1",
+    params: picked,
+  });
+  assert(explicitCells.length === 2, "explicit cellList used for eliminate cells");
+  assert(explicitCells[0].col === 1 && explicitCells[0].row === 0, "explicit cell col/row preserved");
+
+  assert(A.isEliminateSimultaneous({ colOrder: "simultaneous", stagger: 0.1 }), "col simultaneous flag");
+  assert(A.isEliminateSimultaneous({ colOrder: "leftFirst", rowOrder: "simultaneous", stagger: 0.1 }), "row simultaneous flag");
+  assert(A.isEliminateSimultaneous({ colOrder: "leftFirst", rowOrder: "bottomFirst", stagger: 0 }), "zero stagger is simultaneous");
+  assert(A.cellStartDelayForEliminate(2, { colOrder: "simultaneous", stagger: 0.1 }) === 0, "simultaneous zero start delay");
+  assert(A.cellStartDelayForEliminate(2, { colOrder: "leftFirst", rowOrder: "bottomFirst", stagger: 0.1 }) === 0.2, "stagger scales by index");
+
+  var parStarts = [];
+  var parEnds = [];
+  var p1 = A.starterAnim(function (done) {
+    parStarts.push("a");
+    setTimeout(function () {
+      parEnds.push("a");
+      done();
+    }, 30);
+  });
+  var p2 = A.starterAnim(function (done) {
+    parStarts.push("b");
+    setTimeout(function () {
+      parEnds.push("b");
+      done();
+    }, 30);
+  });
+  await A.par(p1, p2).play();
+  assert(parStarts.length === 2, "par starts both anims");
+  assert(parStarts[0] === "a" && parStarts[1] === "b", "par starts in registration order");
+  assert(parEnds.length === 2, "par waits for both anims");
+
+  var cfg2 = SB.deepClone(cfg);
+  cfg2 = SB.upsertSequence(cfg2, SB.createDefaultWaveSequence("f0", "f1"));
+  assert(cfg2.sequences.length === 1, "first upsert adds sequence");
+  var id1 = cfg2.sequences[0].id;
+  cfg2.frames.push({
+    id: "f2",
+    name: "c",
+    grid: SB.emptyGrid(3, 2),
+  });
+  cfg2 = SB.upsertSequence(cfg2, SB.createDefaultEliminateSequence("f1", "f2"));
+  assert(cfg2.sequences.length === 2, "second upsert adds sequence");
+  assert(cfg2.sequences[0].id === id1, "first sequence id preserved on add");
+  assert(cfg2.sequences[1].id !== id1, "second sequence gets distinct id");
+
+  var cascadeCfg = SB.deepClone(cfg);
+  cascadeCfg.frames[0].grid = [
+    ["a.png", "b.png"],
+    ["c.png", "d.png"],
+  ];
+  cascadeCfg.frames[1].grid = [
+    ["x.png", "a.png"],
+    ["c.png", "d.png"],
+  ];
+  cascadeCfg.board.cols = 2;
+  cascadeCfg.board.rows = 2;
+  var eliminateStep = {
+    type: "boardEliminate",
+    fromFrameId: "f0",
+    toFrameId: "f1",
+    params: { cells: "explicit", cellList: [{ col: 1, row: 0 }] },
+  };
+  var cascadeStep = {
+    type: "boardCascadeDrop",
+    fromFrameId: "f0",
+    toFrameId: "f1",
+    params: {},
+  };
+  var eliminated = SB.getEliminateCellsForCascade(cascadeCfg, cascadeStep, eliminateStep);
+  assert(eliminated.length === 1, "cascade reads eliminate step cells");
+  var moves = A.computeCascadeMoves(cascadeCfg, cascadeStep, eliminated);
+  assert(moves.length >= 1, "cascade computes moves after eliminate");
+  assert(
+    moves.some(function (m) {
+      return m.isNew && m.col === 1 && m.toRow === 0;
+    }),
+    "cascade includes new symbol drop"
+  );
+  A.validateAnimStep(cascadeStep, cascadeCfg, { priorEliminateStep: eliminateStep });
 }
 
 console.log(`slot-board-anim: ${passed} passed, ${failed} failed`);

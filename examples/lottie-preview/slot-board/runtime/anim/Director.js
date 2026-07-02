@@ -16,16 +16,29 @@
 
     function playNext() {
       if (index >= steps.length) return Promise.resolve();
+      var stepIndex = index;
       var step = steps[index++];
-      var runtimeConfig = A.getStepRuntimeConfig(step, config);
+      var SB = global.SlotBoardConfig;
+      var stepCtx = {
+        onUpdate: hooks.onUpdate,
+        onHiddenChange: hooks.onHiddenChange,
+        onEffectFrame: hooks.onEffectFrame,
+        onError: hooks.onError,
+        onCascadeComplete: hooks.onCascadeComplete,
+        sequenceSteps: steps,
+        stepIndex: stepIndex,
+        priorEliminateStep: SB.findPriorStepOfType(
+          steps,
+          stepIndex,
+          "boardEliminate"
+        ),
+      };
+      var runtimeConfig = A.getStepRuntimeConfig(step, config, stepCtx);
 
-      if (hooks.onStepStart) hooks.onStepStart(step, runtimeConfig, index - 1);
+      if (hooks.onStepStart) hooks.onStepStart(step, runtimeConfig, stepIndex);
       if (hooks.onOffsetsReset) hooks.onOffsetsReset();
 
-      var ctx = {
-        onUpdate: hooks.onUpdate,
-      };
-      currentAnim = A.buildStepAnim(step, config, ctx);
+      currentAnim = A.buildStepAnim(step, config, stepCtx);
 
       return currentAnim
         .play()
@@ -53,12 +66,27 @@
     hooks = hooks || {};
     A.validateAnimSequence(sequence, config);
 
-    sequence.steps.forEach(function (step) {
+    sequence.steps.forEach(function (step, stepIndex) {
       q.enqueue(function () {
-        var runtimeConfig = A.getStepRuntimeConfig(step, config);
+        var SB = global.SlotBoardConfig;
+        var stepCtx = {
+          onUpdate: hooks.onUpdate,
+          onHiddenChange: hooks.onHiddenChange,
+          onEffectFrame: hooks.onEffectFrame,
+          onError: hooks.onError,
+          onCascadeComplete: hooks.onCascadeComplete,
+          sequenceSteps: sequence.steps,
+          stepIndex: stepIndex,
+          priorEliminateStep: SB.findPriorStepOfType(
+            sequence.steps,
+            stepIndex,
+            "boardEliminate"
+          ),
+        };
+        var runtimeConfig = A.getStepRuntimeConfig(step, config, stepCtx);
         if (hooks.onStepStart) hooks.onStepStart(step, runtimeConfig);
         if (hooks.onOffsetsReset) hooks.onOffsetsReset();
-        var anim = A.buildStepAnim(step, config, { onUpdate: hooks.onUpdate });
+        var anim = A.buildStepAnim(step, config, stepCtx);
         return q.playOne(anim).then(function () {
           if (hooks.onStepEnd) hooks.onStepEnd(step);
         });

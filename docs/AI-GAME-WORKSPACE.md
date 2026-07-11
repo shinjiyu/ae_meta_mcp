@@ -490,6 +490,105 @@ node ai-game-workspace/scripts/sync-se-runtime.mjs
 
 ---
 
+## 19. 远程多用户（功能拆分 · 进行中）
+
+目标：中心 Windows 上 **用户 × 项目** 独立工作区；登录与项目管理后续迭代。当前已落地 **F1 配置抽离**、**F2 基础工程准备**。
+
+### 目录约定
+
+```text
+{dataRoot}/workspaces/{userId}/{projectId}/
+  pa/           # playableAdFramework clone
+  se/           # symbolEditor clone
+  meta.json     # 路径/端口/状态（Creator 槽位后续写入）
+```
+
+默认 `dataRoot`：`ai-game-workspace/data/aiws-data`（可用 `AIWS_DATA_ROOT` / config `dataRoot` 覆盖）。
+
+### 项目 Profile（通用化）
+
+工程专用路径（布局 prefab、入口脚本、盘面 cfg、符号库、Prompt 线索）放在 profile，**不写死在核心代码**：
+
+- 模板：[`templates/project.profile.playable.json`](../ai-game-workspace/templates/project.profile.playable.json)
+- 配置：`config.profilePath` 或 `AIWS_PROFILE` / `--profile`
+- 若未指定且工程存在 `MainUI.prefab`，会自动选用 playable 模板（仅便利；新工程请显式配置）
+
+| 字段 | 用途 |
+|------|------|
+| `layoutPrefabRel` | 布局写回 / 换图改尺寸的默认 prefab |
+| `entryScriptRel` + `layoutBootstrap` | 预览布局 inject 引导注入点 |
+| `boardCfgRel` / `symbolLibraryRel` | 盘面 / 符号（能力可关） |
+| `promptHints` | 可选领域线索；通用工程可关 `promptDomainHints` |
+
+---
+
+### F1 — 配置
+
+- [`lib/config.mjs`](../ai-game-workspace/lib/config.mjs)：`config.json` + `AIWS_*` 环境变量 + CLI（`--meta` / `--public-base-url` 等）
+- [`lib/workspace-meta.mjs`](../ai-game-workspace/lib/workspace-meta.mjs)：`meta.json` 读写与应用到 config
+- `publicBaseUrl`：布局 inject 从此加载（不再写死 `127.0.0.1:8780`）
+- WS `workspace_apply_meta`：运行时按 meta 切换 `projectRoot` / 预览 URL（任务忙时拒绝）
+
+```bash
+# 冒烟
+node ai-game-workspace/scripts/smoke-config.mjs
+
+# 用已准备的工作区启动
+node ai-game-workspace/server.mjs --meta ai-game-workspace/data/aiws-data/workspaces/smoke/demo/meta.json
+```
+
+### F2 — 准备工作区（不开 Creator）
+
+```bash
+# 远程模板（GitHub）
+node ai-game-workspace/scripts/prepare-workspace.mjs --user alice --project demo
+
+# 本机已有工程作源（更快）
+node ai-game-workspace/scripts/prepare-workspace.mjs --user smoke --project demo \
+  --registry ai-game-workspace/templates/projects-registry.local.json \
+  --data-root ai-game-workspace/data/aiws-data
+```
+
+注册表：[`templates/projects-registry.json`](../ai-game-workspace/templates/projects-registry.json)。  
+说明：本机 PATH 上的 Hutao `git` 对 **本地路径 clone** 可能失败；脚本在本地源时会自动改用非 Hutao 的 `git.exe`。
+
+### F3 — 多开门禁（人工）
+
+```bash
+node ai-game-workspace/scripts/multi-open-gate.mjs
+node ai-game-workspace/scripts/multi-open-gate.mjs --check http://127.0.0.1:3921 http://127.0.0.1:3922
+```
+
+须用**支持多开**的 Creator，在两个独立 `pa/` 目录各开一实例；桥不串台才算过。未过则不要上 F6。
+
+### F4 — 端口池
+
+- [`lib/port-pool.mjs`](../ai-game-workspace/lib/port-pool.mjs)：为 `user/project` 分配 preview / boardPreview / cocosmcp / boardCocosmcp
+- 状态：`{dataRoot}/port-pool.json`
+- `prepare-workspace.mjs --allocate-ports` 会写入 `meta.json`
+
+```bash
+node ai-game-workspace/scripts/smoke-port-pool.mjs
+```
+
+### F5 — 登录 + 项目管理（壳）
+
+- 页面：`http://127.0.0.1:8780/portal/`
+- Token：`config.portalToken` / `AIWS_PORTAL_TOKEN`（默认 `aiws-dev`）
+- API：`/api/portal/login|logout|me|projects|enter`
+- 进入已准备项目会跳到 Workspace；未准备则提示跑 `prepare-workspace.mjs`（F6 再自动开 Creator）
+
+### 后续拆分
+
+| 块 | 内容 |
+|----|------|
+| F3 | 多开门禁 — 清单已就绪，**待人工过** |
+| F6 | 进项目初始化（开 Creator×2） |
+| F7 | Workspace 按 meta 自动绑定（产品化） |
+| F8 | 文档收齐 |
+
+---
+
 ## 附录：职责边界速查
 
 ```text

@@ -592,13 +592,24 @@ node ai-game-workspace/scripts/init-project.mjs --user smoke --project demo --sk
 - Creator 路径：`config.creatorExe` / `AIWS_CREATOR_EXE`（默认探测 `ProgramData/cocos/editors/Creator/3.8.*`）
 - Portal「进入」会触发 init；跳转 `/?meta=...` 后 Workspace WS 自动 `workspace_apply_meta`（F7）
 - **多开**：须使用支持多开的 Creator；先跑 `scripts/multi-open-gate.mjs` 门禁
+- Portal 默认**不**开 Creator（勾选「进入时打开 Creator」才开）；已记录 pid 且进程仍在则复用，不重复拉起
+- `GET /api/portal/slots`：当前用户工作区与 PA/SE 进程存活状态
 
-### 后续拆分
+### 进度（截止）
 
-| 块 | 内容 |
+| 块 | 状态 |
 |----|------|
-| F3 | 多开门禁 — 清单已就绪，**待人工过** |
-| F8 | 文档收齐 / Workspace remote |
+| F1 配置抽离 | ✅ |
+| F2 基础工程准备 | ✅ |
+| F3 多开门禁 | 清单就绪，待人工实测 |
+| F4 端口池 | ✅ |
+| F5 登录/项目管理 | ✅ |
+| F6 init + Creator | ✅（pid 复用） |
+| F7 meta 绑定 | ✅ |
+| Profile 去硬编码 | ✅ |
+
+`ai-game-workspace` 本地 git 有提交但**尚未配置 remote**；文档仓 `ae_meta_mcp` 已 push。
+
 
 ---
 

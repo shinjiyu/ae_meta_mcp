@@ -242,6 +242,15 @@ btnNode: Node | null = null; // 禁止：UI 节点靠 Inspector 拖拽
 
 ---
 
+## 3b. Widget（摘要）
+
+- **可用**：满屏根、顶底栏贴边；边距代替 `SafeArea`
+- **不可**：同一节点既挂 `Widget` 又 tween `position` / `scale` / `size`
+- **分层**：`container(Widget)` → `panel(动画)` → 内容；可拖/可写回的叶子节点尽量不挂 Widget
+- 完整约定：[ADFRAME-COCOS-SETUP.md · H2.1](./ADFRAME-COCOS-SETUP.md#h21-widget-用法硬约定)
+
+---
+
 ## 4. 音效用 key：约定路径、缺资源不炸、映射可换皮
 
 ### 约定

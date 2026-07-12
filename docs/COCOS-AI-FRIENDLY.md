@@ -336,7 +336,8 @@ Sfx.play("click"); // 资源：resources/audio/click.mp3
 2. **业务节点是否都在 prefab 预挂齐？** 路径是否稳定？动态节点是否仅限数据驱动内容？
 3. **`MainEntry` 是否在启动时创建了全部会用到的 prefab instance？**（含晚显示的 CTA，先隐藏再 show）
 4. **UI 节点是否全部由 `getChildByPath` / `getComponent` 解析？** 是否误用 `@property` 拖 Node？
-5. **音效是否 key 化？** 缺资源是否安全？新 key 是否写入 preload 与插槽清单？
+5. **Widget 是否只做稳态贴边？** 动画目标是否在子节点？可拖叶子是否无 Widget？
+6. **音效是否 key 化？** 缺资源是否安全？新 key 是否写入 preload 与插槽清单？
 
 ---
 
@@ -357,4 +358,4 @@ Sfx.play("click"); // 资源：resources/audio/click.mp3
 | 音效服务 | `assets/scripts/audio/Sfx.ts` |
 | 事件→key | `assets/scripts/audio/BoardAudioBinder.ts` |
 | 插槽清单 | `docs/AUDIO-SLOTS.md` |
-| **Workspace 工程设置清单** | [`docs/ADFRAME-COCOS-SETUP.md`](./ADFRAME-COCOS-SETUP.md) |
+| **Workspace 工程设置清单** | [`docs/ADFRAME-COCOS-SETUP.md`](./ADFRAME-COCOS-SETUP.md)（含 **Widget 用法 H2.1**） |

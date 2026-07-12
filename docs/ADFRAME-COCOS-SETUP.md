@@ -39,6 +39,99 @@ node ai-game-workspace/scripts/check-adframe-project.mjs --pa D:/path/to/pa --se
 
 ---
 
+## 硬性指标（必须满足）
+
+下列为 ADFRAME 试玩模板的 **硬约束**。换皮 / 新项目若偏离，须同步改 profile 与渠道验收标准，并明确告知 Workspace。
+
+### H1. 分辨率与适配
+
+| 项 | 硬性值 | 配置位置 |
+|----|--------|----------|
+| 设计分辨率 | **720 × 1280**（竖屏） | `settings/v2/packages/project.json` → `general.designResolution` |
+| fitWidth | **false** | 同上 |
+| fitHeight | **true** | 同上（按高度适配，宽度可裁切/留边由 Canvas 策略决定） |
+| 主 UI 根尺寸 | Prefab 根 `UITransform` = **720×1280** | `MainUI.prefab` / `CTA.prefab` 根节点 |
+| 方向 | **Portrait only** | 试玩与商店素材按竖屏交付；不要做成可横竖切换的双布局 |
+| Camera | 正交；与设计稿一致（模板 orthoHeight 常为 **640**） | `Main.scene` → Camera（AI **不改** scene，建模板时定好） |
+
+Profile 字段（playable 模板已写）：`designResolution.width/height/fitWidth/fitHeight/orientation`。
+
+**禁止：**
+
+- 擅自改成 1080×1920 / 750×1334 等而不改全套贴图与布局契约
+- `fitWidth=true` 且 `fitHeight=true` 同时开（易导致非预期拉伸）
+- 在业务 prefab 里再挂第二套 `Canvas` / `Camera`
+
+**验收：**
+
+```bash
+node ai-game-workspace/scripts/check-adframe-project.mjs
+# 须 PASS：designResolution 720×1280、fitHeight=true、fitWidth=false
+```
+
+### H2. 可用组件（白名单）与禁用（黑名单）
+
+面向 **AI / 布局写回 / 换皮**：只使用下列引擎组件搭 UI。模板 MainUI/CTA 实测亦落在此集合。
+
+#### 允许（白名单）
+
+| 组件 | 用途 | 备注 |
+|------|------|------|
+| `cc.UITransform` | 尺寸 / 锚点 | **每个** UI 节点必备；布局写回改 `_contentSize` |
+| `cc.Sprite` | 贴图 | 换皮主路径；保持 SpriteFrame 引用可覆盖 |
+| `cc.Label` | 文案 / 分数 | 简单文本；复杂排版优先位图字或拆节点 |
+| `cc.Button` | 点击 | CTA / 下载等；事件在 TS 里绑，不靠 Inspector 拖 Node |
+| `cc.Widget` | 贴边对齐 | 仅稳态布局；**不要**对挂 Widget 的同一节点做 position/scale tween |
+| `cc.Mask` | 裁剪 | 常用根下 `Mask/...` 路径契约 |
+| `cc.Graphics` | 简单矢量/遮罩辅助 | 少用；复杂图形改贴图 |
+| `sp.Skeleton` | Spine | 符号 / CTA 等；换皮覆盖 atlas/skel，勿改节点名 |
+| 薄自定义挂载 | 如 `BoardStage` | 只暴露配置引用；**不**在大 prefab 堆业务逻辑 |
+
+Scene 壳允许：`cc.Canvas`、`cc.Camera`、`cc.Widget`、唯一入口脚本（如 `MainEntry`）。
+
+运行时按需 `getComponent` 的组件（如 `UIOpacity`）可以代码添加，**不必**预挂在 prefab 上。
+
+#### 默认禁用（黑名单 · AI 不要新增）
+
+| 组件 | 原因 |
+|------|------|
+| `cc.Layout` | 自动排布与手调坐标 / 布局写回冲突 |
+| `cc.ScrollView` / `PageView` / `EditBox` / `Toggle` / `Slider` / `ProgressBar` | 试玩交互面过重；非 ADFRAME 模板契约 |
+| `cc.RichText` | 解析与换皮成本高；用 Label / 位图字 |
+| `cc.SafeArea` | 设计稿按 720×1280 满画布；安全区用 Widget 手工留白 |
+| `cc.Animation`（剪辑动画） | 表现走 Spine / tween / 盘面模板；避免与 Widget 抢 transform |
+| `cc.AudioSource` 挂在 UI 节点 | 音效走 key 化 `Sfx` 服务，不挂节点组件 |
+| 业务 `Canvas`/`Camera` 进 Prefab | 渲染根只在 scene |
+| `@property(Node\|Button\|…)` Inspector 拖绑定 | 见 [COCOS-AI-FRIENDLY.md](./COCOS-AI-FRIENDLY.md)；用路径 + genbot |
+
+特殊需求（如必须 ScrollView）须 **人工改模板 + 更新本文与 profile**，禁止 Agent 自行引入。
+
+### H3. 其它硬性指标
+
+| 项 | 硬性要求 |
+|----|----------|
+| Creator | **3.8.8**（`package.json` → `creator.version`） |
+| 渲染 | **2D UI** 试玩；不以 3D 场景作主界面 |
+| Scene | 仅壳；**AI 禁止改** `.scene` |
+| Prefab 根 | 与设计分辨率同尺寸；业务树在 prefab |
+| 节点名 | 布局/Agent 按 `_name` 匹配；契约节点名稳定（如 `Mask/multi/greenball`） |
+| 布局写回能力 | 目前支持节点 **position / size(UITransform)** 等；不支持改 Layout 自动单元格 |
+| 换图 | 覆盖被引用 png + `.meta` 尺寸；inbox 在 `.ai-workspace/inbox`，禁止建在 `assets/` |
+| 上传体积 | Workspace `maxUploadBytes` 默认 **50MB** / 文件 |
+| 正式包 | `PREVIEW=false`；不得依赖 layout-inject |
+| Git | 工程操作使用 **`hutao`**（Workspace `gitBin`） |
+
+### H4. 硬性清单（勾选）
+
+- [ ] `designResolution` = 720×1280，`fitWidth=false`，`fitHeight=true`
+- [ ] MainUI / CTA 根 `UITransform` 为 720×1280
+- [ ] 业务 UI 组件仅来自白名单；无黑名单组件（除非已文档化例外）
+- [ ] Scene 无业务节点；无第二 Canvas
+- [ ] 无 `@property` 拖 Node 作为唯一 UI 绑定
+- [ ] Creator 3.8.8 + cocos-meta-mcp 已启用
+
+---
+
 ## 1. 主机与 Creator
 
 ### 1.1 必装
@@ -86,7 +179,7 @@ node ai-game-workspace/scripts/multi-open-gate.mjs --check http://127.0.0.1:3921
 
 - [ ] `package.json` 中 `"creator": { "version": "3.8.8" }`（或与主机 Creator 一致的 3.8.x）
 - [ ] 可用 Git 克隆；远程多用户下作为 **PA 模板源**（`projects-registry`）
-- [ ] 设计分辨率与试玩一致（当前模板常见 **720×1280**，见 `settings/v2/packages/project.json`）
+- [ ] **分辨率 / 组件** 满足上文 **硬性指标 H1–H4**（`settings/v2/packages/project.json` + profile `designResolution`）
 
 ### 2.2 目录与关键路径（须与 Profile 对齐）
 
@@ -219,13 +312,14 @@ Playable 默认全开；裁剪工程时在 profile 关闭：
 
 ## 5. 验收清单（建议顺序）
 
-1. [ ] `node ai-game-workspace/scripts/check-adframe-project.mjs` 全部 PASS  
-2. [ ] Creator 打开 PA：扩展正常，预览可开，`cocosmcp /health` OK  
-3. [ ] 预览加 `?aiws_layout=1`：布局编辑层可加载  
-4. [ ]（若用盘面）Creator 打开 SE：预览 + `?aiws_board=1` 嵌入 Workspace 可通信  
-5. [ ] `sync-se-runtime` 后 `animTemplates` inSync  
-6. [ ] Workspace 发一条简单改图/改文案任务：能改 prefab、预览刷新、可 commit（人工确认）  
-7. [ ] F3 多开实测通过后再开多用户 Portal 自动拉起  
+1. [ ] `node ai-game-workspace/scripts/check-adframe-project.mjs` 全部 PASS（含分辨率）  
+2. [ ] **H1–H4** 硬性指标勾选完成  
+3. [ ] Creator 打开 PA：扩展正常，预览可开，`cocosmcp /health` OK  
+4. [ ] 预览加 `?aiws_layout=1`：布局编辑层可加载  
+5. [ ]（若用盘面）Creator 打开 SE：预览 + `?aiws_board=1` 嵌入 Workspace 可通信  
+6. [ ] `sync-se-runtime` 后 `animTemplates` inSync  
+7. [ ] Workspace 发一条简单改图/改文案任务：能改 prefab、预览刷新、可 commit（人工确认）  
+8. [ ] F3 多开实测通过后再开多用户 Portal 自动拉起  
 
 ---
 

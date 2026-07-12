@@ -523,6 +523,7 @@ node ai-game-workspace/scripts/sync-se-runtime.mjs
 | `boardCfgRel` / `symbolLibraryRel` / `animTemplatesRel` | 盘面 cfg、符号库、模板比对路径 |
 | `seRuntimeScripts` / `seRuntimeDirs` | SE→PA runtime 同步清单（能力 `seRuntimeSync`） |
 | `promptFlagPatterns` + `promptHints` | Prompt 关键词与领域线索；可关 `promptDomainHints` |
+| `designResolution` / `componentsAllowed` / `componentsForbidden` | 分辨率与组件硬指标（见 [ADFRAME-COCOS-SETUP.md](./ADFRAME-COCOS-SETUP.md)） |
 | `capabilities` | `layout` / `board` / `symbol` / `seRuntimeSync` / `promptDomainHints` |
 
 ---

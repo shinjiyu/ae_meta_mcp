@@ -578,14 +578,27 @@ node ai-game-workspace/scripts/smoke-port-pool.mjs
 - API：`/api/portal/login|logout|me|projects|enter`
 - 进入已准备项目会跳到 Workspace；未准备则提示跑 `prepare-workspace.mjs`（F6 再自动开 Creator）
 
+### F6 / F7 — 初始化与绑定
+
+```bash
+# 准备 + 分配端口 + 打开 Creator×2（PA/SE）
+node ai-game-workspace/scripts/init-project.mjs --user smoke --project demo \
+  --registry ai-game-workspace/templates/projects-registry.local.json
+
+# 只准备不开编辑器
+node ai-game-workspace/scripts/init-project.mjs --user smoke --project demo --skip-creator true
+```
+
+- Creator 路径：`config.creatorExe` / `AIWS_CREATOR_EXE`（默认探测 `ProgramData/cocos/editors/Creator/3.8.*`）
+- Portal「进入」会触发 init；跳转 `/?meta=...` 后 Workspace WS 自动 `workspace_apply_meta`（F7）
+- **多开**：须使用支持多开的 Creator；先跑 `scripts/multi-open-gate.mjs` 门禁
+
 ### 后续拆分
 
 | 块 | 内容 |
 |----|------|
 | F3 | 多开门禁 — 清单已就绪，**待人工过** |
-| F6 | 进项目初始化（开 Creator×2） |
-| F7 | Workspace 按 meta 自动绑定（产品化） |
-| F8 | 文档收齐 |
+| F8 | 文档收齐 / Workspace remote |
 
 ---
 

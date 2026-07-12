@@ -517,8 +517,10 @@ node ai-game-workspace/scripts/sync-se-runtime.mjs
 |------|------|
 | `layoutPrefabRel` | 布局写回 / 换图改尺寸的默认 prefab |
 | `entryScriptRel` + `layoutBootstrap` | 预览布局 inject 引导注入点 |
-| `boardCfgRel` / `symbolLibraryRel` | 盘面 / 符号（能力可关） |
-| `promptHints` | 可选领域线索；通用工程可关 `promptDomainHints` |
+| `boardCfgRel` / `symbolLibraryRel` / `animTemplatesRel` | 盘面 cfg、符号库、模板比对路径 |
+| `seRuntimeScripts` / `seRuntimeDirs` | SE→PA runtime 同步清单（能力 `seRuntimeSync`） |
+| `promptFlagPatterns` + `promptHints` | Prompt 关键词与领域线索；可关 `promptDomainHints` |
+| `capabilities` | `layout` / `board` / `symbol` / `seRuntimeSync` / `promptDomainHints` |
 
 ---
 

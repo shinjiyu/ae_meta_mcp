@@ -492,7 +492,10 @@ node ai-game-workspace/scripts/sync-se-runtime.mjs
 
 ## 19. 远程多用户（功能拆分 · 进行中）
 
-目标：中心 Windows 上 **用户 × 项目** 独立工作区；登录与项目管理后续迭代。当前已落地 **F1 配置抽离**、**F2 基础工程准备**。
+目标：中心 Windows 上 **用户 × 项目** 独立工作区；登录与项目管理后续迭代。当前已落地 **F1–F7**（F3 待人工实测）与 **Profile 去硬编码**。
+
+**工程接入清单（ADFRAME / Creator 设置）** → [`ADFRAME-COCOS-SETUP.md`](./ADFRAME-COCOS-SETUP.md)  
+自检：`node ai-game-workspace/scripts/check-adframe-project.mjs`
 
 ### 目录约定
 
@@ -608,9 +611,10 @@ node ai-game-workspace/scripts/init-project.mjs --user smoke --project demo --sk
 | F5 登录/项目管理 | ✅ |
 | F6 init + Creator | ✅（pid 复用） |
 | F7 meta 绑定 | ✅ |
-| Profile 去硬编码 | ✅ |
+| Profile 去硬编码（路径 + SE sync + prompt flags） | ✅ |
+| ADFRAME/Cocos 设置 DOC + check 脚本 | ✅ |
 
-`ai-game-workspace` 本地 git 有提交但**尚未配置 remote**；文档仓 `ae_meta_mcp` 已 push。
+Workspace 实现仓：`https://github.com/shinjiyu/-ai_game_frame.git`（`ai-game-workspace/`）。设计文档在本仓 `ae_meta_mcp`。
 
 
 ---

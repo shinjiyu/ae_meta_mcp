@@ -310,20 +310,21 @@ node ai-game-workspace/scripts/sync-se-runtime.mjs --se <seRoot> --pa <paRoot>
 
 **路径冻结（纯框架拆分）：** 不要把上述目录改名迁到 `framework/`，除非 SE + PA + profile **同 PR** 更新。归属说明见 PA 仓 `docs/FRAMEWORK-LAYOUT.md`。
 
-### 2.6.1 业务 Overlay vs 灰盒 Sample
+### 2.6.1 业务 Overlay vs Stub Sample
 
-PA（`refactor/pure-framework` 起）主树默认为 **灰盒 sample**（占位商店 URL + 灰贴图），麻将完整业务在：
+PA（`refactor/pure-framework` 起）主树默认为 **stub sample**：`MainUI` 保留 `Mask` + 内层 bg + `panel/board_stage`（`BoardStage`，doc/符号库可空）+ `Btn`，`CTA` 保留 `Mask`+`btn`（占位商店 URL）。`MainEntry` 启动即创建 MainUI+CTA（CTA 先隐藏）。麻将完整业务在：
 
 `examples/mahjong-overlay/`
 
 ```bash
 # 在 PA 根目录
-npm run overlay:mahjong    # 还原麻将资源与 app config
-npm run graybox            # 再把主树贴图灰盒化
+npm run overlay:mahjong    # 还原麻将资源、prefab 与 app config
 npm run check:framework    # 边界检查（契约版本、无麻将商店 id 等）
 ```
 
-Profile 字段：`mahjongOverlayRel`、`animContractVersion`、`sampleMode`（见 `templates/project.profile.playable.json`）。  
+验收以 stub prefab 通路为准（见 PA `docs/SAMPLE.md`），不要用灰盒贴图「假装」整盘能跑。
+
+Profile 字段：`mahjongOverlayRel`、`animContractVersion`、`sampleMode: stub-prefabs`（见 `templates/project.profile.playable.json`）。  
 IAnim 契约真源：[shinjiyu/IAnim](https://github.com/shinjiyu/IAnim)。
 
 ### 2.7 Capabilities（Profile）

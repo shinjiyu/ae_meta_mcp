@@ -163,6 +163,12 @@ const btnNode = this.node.getChildByPath("Btn");
 const btn = btnNode?.getComponent(Button);
 
 // MainEntry：启动创建 MainUI + CTA；CTA 先隐藏
+private spawnShell() {
+    // 并行 load MainUI + CTA，instantiate 后 CTA.active = false
+}
+showCTA() {
+    this._ctaRoot.active = true; // 不用 resources.load
+}
 ```
 
 ---
@@ -212,6 +218,8 @@ export class MainUIDriver extends Component {
 | 配置列表 | 符号库条目数组 |
 
 典型：`BoardStage` 上拖盘面 JSON、符号库 prefab、格宽格高——这是 mount 配置，不是「把某个 Button 拖进脚本」。
+
+**AI Game Workspace 布局 Tab**：挂有 `BoardStage` 的节点可改位置/缩放/尺寸；其子节点（运行时盘面格子等）**不进可编辑树**，选中也会回退到 `BoardStage` 本身。符号内容走盘面 / SE，不走布局直改。
 
 ### 为什么对 AI 友好
 

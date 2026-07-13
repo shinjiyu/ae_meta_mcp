@@ -308,6 +308,24 @@ Profile `seRuntimeScripts` / `seRuntimeDirs` 列出的文件必须在 **SE 与 P
 node ai-game-workspace/scripts/sync-se-runtime.mjs --se <seRoot> --pa <paRoot>
 ```
 
+**路径冻结（纯框架拆分）：** 不要把上述目录改名迁到 `framework/`，除非 SE + PA + profile **同 PR** 更新。归属说明见 PA 仓 `docs/FRAMEWORK-LAYOUT.md`。
+
+### 2.6.1 业务 Overlay vs 灰盒 Sample
+
+PA（`refactor/pure-framework` 起）主树默认为 **灰盒 sample**（占位商店 URL + 灰贴图），麻将完整业务在：
+
+`examples/mahjong-overlay/`
+
+```bash
+# 在 PA 根目录
+npm run overlay:mahjong    # 还原麻将资源与 app config
+npm run graybox            # 再把主树贴图灰盒化
+npm run check:framework    # 边界检查（契约版本、无麻将商店 id 等）
+```
+
+Profile 字段：`mahjongOverlayRel`、`animContractVersion`、`sampleMode`（见 `templates/project.profile.playable.json`）。  
+IAnim 契约真源：[shinjiyu/IAnim](https://github.com/shinjiyu/IAnim)。
+
 ### 2.7 Capabilities（Profile）
 
 Playable 默认全开；裁剪工程时在 profile 关闭：

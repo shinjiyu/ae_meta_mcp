@@ -475,6 +475,16 @@ node ai-game-workspace/scripts/sync-se-runtime.mjs
 
 或盘面 Tab「同步 runtime」（WS `board_sync_runtime`）。复制 SE→PA 的 runtime 脚本，**保留 PA `.meta`**。
 
+### Symbol 美术包（按盘面）
+
+AI 经 SE 桥静默导出「盘面用到的」符号依赖，再 merge 进 PA：
+
+1. `symbol-tools/export-pack-for-ai`（cocos-meta-mcp；Cursor skill `se-symbol-pack-export`）
+2. `node ai-game-workspace/scripts/merge-symbol-pack.mjs --pack <se>/temp/symbol-pack --pa <pa>`
+3. 或 WS `symbol_pack_merge`
+
+详见 SE `docs/SYMBOL-PACK-EXPORT.md`、[ADFRAME-COCOS-SETUP.md](./ADFRAME-COCOS-SETUP.md) §2.6.0。
+
 ### 符号 MVP 边界
 
 - 列出 `symbol-library.prefab` 的 `SymbolEntry`

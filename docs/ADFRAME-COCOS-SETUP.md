@@ -244,7 +244,7 @@ Playable profile 默认路径（可改 profile，**不可**在核心代码写死
 | `autoDetectRel` / `layoutPrefabRel` | `assets/resources/prefab/MainUI.prefab` | 布局写回 / 换图尺寸 / 自动识别 playable |
 | `entryScriptRel` | `assets/scripts/MainEntry.ts` | 布局 inject 引导注入点 |
 | `boardCfgRel` | `assets/resources/cfg/doc_example.json` | 盘面 JSON（PA 侧副本） |
-| `symbolLibraryRel` | `assets/resources/symbol-library.prefab` | 符号库 |
+| `symbolLibraryRel` | `assets/resources/symbol-library.prefab`（PA）；SE 为 `assets/resources/games/<gameId>/symbol-library.prefab` | 符号库 |
 | `animTemplatesRel` | `assets/scripts/editor-app/animTemplates.ts` | 与 SE 模板比对 |
 
 另须存在（AI / 布局工作流）：
@@ -307,6 +307,22 @@ Profile `seRuntimeScripts` / `seRuntimeDirs` 列出的文件必须在 **SE 与 P
 ```bash
 node ai-game-workspace/scripts/sync-se-runtime.mjs --se <seRoot> --pa <paRoot>
 ```
+
+### 2.6.0 Symbol 美术包（按盘面 / AI）
+
+**通道**：AI → cocos-meta-mcp → SE `symbol-tools/export-pack-for-ai`（静默）→ `temp/symbol-pack` → merge 进 PA。
+
+- SE 文档：[symbolEditor `docs/SYMBOL-PACK-EXPORT.md`](../../symbolEditor/docs/SYMBOL-PACK-EXPORT.md)（若多仓并列）或 SE 仓内同路径
+- Cursor skill：`se-symbol-pack-export`
+- 合并：
+
+```bash
+node ai-game-workspace/scripts/merge-symbol-pack.mjs \
+  --pack <seRoot>/temp/symbol-pack --pa <paRoot>
+```
+
+- AIWS WS：`symbol_pack_merge`
+- 默认 **只导出盘面用到的符号**；runtime TS 仍用上一节 `seRuntimeSync`
 
 **路径冻结（纯框架拆分）：** 不要把上述目录改名迁到 `framework/`，除非 SE + PA + profile **同 PR** 更新。归属说明见 PA 仓 `docs/FRAMEWORK-LAYOUT.md`。
 

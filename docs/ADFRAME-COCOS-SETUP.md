@@ -213,6 +213,8 @@ node ai-game-workspace/scripts/multi-open-gate.mjs --check http://127.0.0.1:3921
 
 **未过 F3 → 不要依赖 Portal 自动开多 Creator。**
 
+部署方式：**本机直接跑 AIWS**（`node ai-game-workspace/server.mjs` + 本机 Creator），不再使用 Windows Sandbox。
+
 ### 1.3 端口约定（端口池会分配；本机 demo 常用）
 
 | 用途 | Demo 常见值 | 池段（默认） |

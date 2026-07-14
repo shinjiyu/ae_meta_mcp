@@ -500,9 +500,9 @@ AI 经 SE 桥静默导出「盘面用到的」符号依赖，再 merge 进 PA：
 
 ---
 
-## 19. 远程多用户（功能拆分 · 进行中）
+## 19. 远程多用户（工作区 / 模板库 / SQLite）
 
-目标：中心 Windows 上 **用户 × 项目** 独立工作区；登录与项目管理后续迭代。当前已落地 **F1–F7**（F3 待人工实测）与 **Profile 去硬编码**。
+目标：中心 Windows 上 **用户 × 工作区** 独立工作树；**不再**把本机共享 `playableAdFramework` / `symbolEditor` 当作默认运行工程。登录后扫描进行中工作区或新建（必须选 PA + SE 模板）；模板库由 admin 管理。
 
 **工程接入清单（ADFRAME / Creator 设置）** → [`ADFRAME-COCOS-SETUP.md`](./ADFRAME-COCOS-SETUP.md)  
 自检：`node ai-game-workspace/scripts/check-adframe-project.mjs`
@@ -510,13 +510,63 @@ AI 经 SE 桥静默导出「盘面用到的」符号依赖，再 merge 进 PA：
 ### 目录约定
 
 ```text
-{dataRoot}/workspaces/{userId}/{projectId}/
-  pa/           # playableAdFramework clone
-  se/           # symbolEditor clone
-  meta.json     # 路径/端口/状态（Creator 槽位后续写入）
+{dataRoot}/
+  aiws.db              # SQLite：users / templates / workspaces
+  port-pool.json
+  workspaces/{userId}/{workspaceId}/
+    pa/                # PA 模板 git clone
+    se/                # SE 模板 git clone
+    meta.json          # 路径/端口/状态（Creator 可读）
 ```
 
-默认 `dataRoot`：`ai-game-workspace/data/aiws-data`（可用 `AIWS_DATA_ROOT` / config `dataRoot` 覆盖）。
+默认 `dataRoot`：`ai-game-workspace/data/aiws-data`（`AIWS_DATA_ROOT` / config `dataRoot`）。  
+`workspaceId` 为短 uuid；`meta.projectId` 与之相同（兼容旧 apply）。
+
+### 数据模型（SQLite）
+
+- `users`：登录用户、`last_workspace_id`
+- `templates`：`kind=pa|se`、`git_url`、`enabled`…
+- `workspaces`：用户工作区状态、`pa_template_id` / `se_template_id`、端口摘要、pid
+
+首次启动若 templates 为空，从 [`projects-registry.json`](../ai-game-workspace/templates/projects-registry.json) 的 `defaults.paGitUrl` / `seGitUrl` **seed** 两条默认模板。
+
+### Portal 流程
+
+1. 登录（kuroneko 邮箱密码，或 `authMode=dev`）
+2. **进行中**：`GET /api/portal/workspaces`
+3. **新建**：`POST /api/portal/workspaces` `{ name, paTemplateId, seTemplateId, openCreator? }` → clone 两库、写 meta、写 DB
+4. **进入**：`POST /api/portal/workspaces/:id/enter` → 端口复用、可选 Creator → `/?meta=...` → WS `workspace_apply_meta`
+5. **归档**：`POST .../archive`（只改 status，不删磁盘）
+
+模板只读：`GET /api/portal/templates?kind=pa|se`  
+Admin 写：`/api/admin/templates` + 页面 `/portal/templates/`（`config.adminEmails`）
+
+### 运行时绑定
+
+- `config.json` **不设**默认本机 `projectRoot` / `boardEditorRoot`；冷启动可起 Portal
+- 无选中工作区时 Chat / 布局 / 盘面 API 拒绝，提示先进入工作区
+- 进入后 `projectRoot`→`pa/`，`boardEditorRoot`→`se/`
+
+### 准备工作区 CLI
+
+```bash
+# 推荐：显式 git URL + workspace-id
+node ai-game-workspace/scripts/prepare-workspace.mjs \
+  --user alice --workspace-id ws_demo \
+  --pa-git https://github.com/shinjiyu/SlotPlayableAdFrame.git \
+  --se-git https://github.com/shinjiyu/CocosSlotsEditor.git \
+  --allocate-ports true
+
+# 本机路径作源（更快）
+node ai-game-workspace/scripts/prepare-workspace.mjs \
+  --user smoke --workspace-id local1 \
+  --pa-git D:/workspace/playableAdFramework \
+  --se-git D:/workspace/symbolEditor \
+  --allocate-ports true
+
+# 旧：registry project id（仍可用）
+node ai-game-workspace/scripts/prepare-workspace.mjs --user alice --project demo
+```
 
 ### 项目 Profile（通用化）
 
@@ -553,20 +603,11 @@ node ai-game-workspace/scripts/smoke-config.mjs
 node ai-game-workspace/server.mjs --meta ai-game-workspace/data/aiws-data/workspaces/smoke/demo/meta.json
 ```
 
+部署：**本机 AIWS**（见上文启动命令）。已放弃 Windows Sandbox 方案。
+
 ### F2 — 准备工作区（不开 Creator）
 
-```bash
-# 远程模板（GitHub）
-node ai-game-workspace/scripts/prepare-workspace.mjs --user alice --project demo
-
-# 本机已有工程作源（更快）
-node ai-game-workspace/scripts/prepare-workspace.mjs --user smoke --project demo \
-  --registry ai-game-workspace/templates/projects-registry.local.json \
-  --data-root ai-game-workspace/data/aiws-data
-```
-
-注册表：[`templates/projects-registry.json`](../ai-game-workspace/templates/projects-registry.json)。  
-说明：本机 PATH 上的 Hutao `git` 对 **本地路径 clone** 可能失败；脚本在本地源时会自动改用非 Hutao 的 `git.exe`。
+见上文「准备工作区 CLI」。注册表仅作 seed / 兼容；日常以 DB 模板为准。
 
 ### F3 — 多开门禁（人工）
 
@@ -579,7 +620,7 @@ node ai-game-workspace/scripts/multi-open-gate.mjs --check http://127.0.0.1:3921
 
 ### F4 — 端口池
 
-- [`lib/port-pool.mjs`](../ai-game-workspace/lib/port-pool.mjs)：为 `user/project` 分配 preview / boardPreview / cocosmcp / boardCocosmcp
+- [`lib/port-pool.mjs`](../ai-game-workspace/lib/port-pool.mjs)：为 `user/workspace` 分配 preview / boardPreview / cocosmcp / boardCocosmcp
 - 状态：`{dataRoot}/port-pool.json`
 - `prepare-workspace.mjs --allocate-ports` 会写入 `meta.json`
 
@@ -587,29 +628,18 @@ node ai-game-workspace/scripts/multi-open-gate.mjs --check http://127.0.0.1:3921
 node ai-game-workspace/scripts/smoke-port-pool.mjs
 ```
 
-### F5 — 登录 + 项目管理（壳）
+### F5 — 登录 + 工作区 Portal
 
 - 页面：`http://127.0.0.1:8780/portal/`
-- Token：`config.portalToken` / `AIWS_PORTAL_TOKEN`（默认 `aiws-dev`）
-- API：`/api/portal/login|logout|me|projects|enter`
-- 进入已准备项目会跳到 Workspace；未准备则提示跑 `prepare-workspace.mjs`（F6 再自动开 Creator）
+- 模板管理：`http://127.0.0.1:8780/portal/templates/`（admin）
+- Auth：`authMode=kuroneko`（默认）或 `dev` + `portalToken`
+- Admin：`config.adminEmails`（匹配登录邮箱；dev 也可匹配 userId）
+- API：`/api/portal/workspaces`、`/api/portal/templates`、`/api/admin/templates`
 
 ### F6 / F7 — 初始化与绑定
 
-```bash
-# 准备 + 分配端口 + 打开 Creator×2（PA/SE）
-node ai-game-workspace/scripts/init-project.mjs --user smoke --project demo \
-  --registry ai-game-workspace/templates/projects-registry.local.json
-
-# 只准备不开编辑器
-node ai-game-workspace/scripts/init-project.mjs --user smoke --project demo --skip-creator true
-```
-
-- Creator 路径：`config.creatorExe` / `AIWS_CREATOR_EXE`（默认探测 `ProgramData/cocos/editors/Creator/3.8.*`）
-- Portal「进入」会触发 init；跳转 `/?meta=...` 后 Workspace WS 自动 `workspace_apply_meta`（F7）
-- **多开**：须使用支持多开的 Creator；先跑 `scripts/multi-open-gate.mjs` 门禁
-- Portal 默认**不**开 Creator（勾选「进入时打开 Creator」才开）；已记录 pid 且进程仍在则复用，不重复拉起
-- `GET /api/portal/slots`：当前用户工作区与 PA/SE 进程存活状态
+新建/进入工作区由 Portal API 调 `prepare-workspace`（git URL）；勾选「打开 Creator」才拉起。  
+跳转 `/?meta=...` 后 Workspace WS 自动 `workspace_apply_meta`（F7）。
 
 ### 进度（截止）
 

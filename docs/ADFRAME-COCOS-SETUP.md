@@ -245,8 +245,11 @@ Playable profile 默认路径（可改 profile，**不可**在核心代码写死
 |--------------|--------------|------|
 | `autoDetectRel` / `layoutPrefabRel` | `assets/resources/prefab/MainUI.prefab` | 布局写回 / 换图尺寸 / 自动识别 playable |
 | `entryScriptRel` | `assets/scripts/MainEntry.ts` | 布局 inject 引导注入点 |
-| `boardCfgRel` | `assets/resources/cfg/doc_example.json` | 盘面 JSON（PA 侧副本） |
-| `symbolLibraryRel` | `assets/resources/symbol-library.prefab`（PA）；SE 为 `assets/resources/games/<gameId>/symbol-library.prefab` | 符号库 |
+| `boardCfgRel` | `assets/resources/cfg/doc_example.json` | 盘面 JSON（PA 侧） |
+| `seBoardDocRel` | `assets/resources/configs/presentation/doc_example.json` | 合并前镜像到 SE 的盘面路径 |
+| `symbolGameId` | `golden-seth` | SE packId；库在 `spine-*/packs/<id>/` |
+| `symbolLibraryRel` | `assets/resources/symbol-library.prefab`（PA 扁平镜像）；SE 真源为 `assets/resources/spine-3.8/packs/<packId>/symbol-library.prefab`（4.2 区同理） | 符号库 |
+| `symbolAssetLibraryRel`（建议） | SE：`…/packs/<packId>/asset-library.prefab`；PA 同步后同相对路径 | 素材库（*AssetId 解析；新包必有） |
 | `animTemplatesRel` | `assets/scripts/editor-app/animTemplates.ts` | 与 SE 模板比对 |
 
 另须存在（AI / 布局工作流）：
@@ -302,9 +305,10 @@ Workspace 会向 `entryScriptRel` 注入 / 校验 `installLayoutBootstrap`（仅
 
 Profile `seRuntimeScripts` / `seRuntimeDirs` 列出的文件必须在 **SE 与 PA 同相对路径** 存在（同步保留 PA `.meta`）：
 
-- [ ] `assets/scripts/editor-app/` 下 Board/Symbol 相关脚本（见 playable profile 清单）
+- [ ] `assets/scripts/editor-app/` 下 Board/Symbol 相关脚本（见 playable profile 清单；**须含** `AssetDefs` / `AssetLibrary` / `SymbolResolve` / `GamePack` / `SpineZone`）
 - [ ] `assets/scripts/common`、`editor-core`、`vendor/slot-presentation-ir` 等目录
 - [ ] **禁止**在 PA 手改 `animTemplates`；只在 SE 扩展后执行同步
+- [ ] SE 符号真源：`assets/resources/spine-{3.8|4.2}/packs/<packId>/`（`symbol-library` + `asset-library`）；勿再用 `games/`
 
 ```bash
 node ai-game-workspace/scripts/sync-se-runtime.mjs --se <seRoot> --pa <paRoot>
@@ -347,13 +351,13 @@ IAnim 契约真源：[shinjiyu/IAnim](https://github.com/shinjiyu/IAnim)。
 
 ### 2.7 Capabilities（Profile）
 
-Playable 默认全开；裁剪工程时在 profile 关闭：
+Playable 默认：`layout` / `board` / `seRuntimeSync` / `promptDomainHints` 开；**`symbol` 关**（符号只改模板工程）。
 
 | Capability | 关闭后 |
 |------------|--------|
 | `layout` | 布局写回不可用 |
 | `board` | 盘面 Tab / board_* WS 拒绝 |
-| `symbol` | 符号列表拒绝 |
+| `symbol` | Web 符号侧栏隐藏；`symbol_list` / `symbol_pack_merge` 拒绝 |
 | `seRuntimeSync` | 禁止 sync runtime |
 | `promptDomainHints` | Prompt 不加领域线索 |
 

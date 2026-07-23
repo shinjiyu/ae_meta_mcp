@@ -134,13 +134,17 @@
 **仅负责：**
 
 ```text
-收到 Prompt → 调用 Cursor CLI → 等待结束 → 返回结果
+收到 Prompt → @cursor/sdk（Agent.create / resume / stream）或 CLI 回退 → 返回结果
 ```
+
+有 `secrets.cursorApiKey` 时默认走 SDK（`config.cursorBackend: auto|sdk|cli`）；无 Key 时回退 CLI `create-chat` + `--resume`。
+
+**默认续聊**：任务复用 `session.json` 的 agentId/chatId；勾选「新开对话」或点「新 Session」才 `forceNew`。续聊用精简 prompt，完整系统约束只在首轮注入。
 
 **Cursor 不负责：**
 
 - 上传
-- Session 管理
+- Session 持久化文件（由 Workspace store）
 - Git
 - UI
 
@@ -171,7 +175,7 @@
 维护：
 
 ```text
-Workspace → Cursor Session → 历史 Prompt
+Workspace → Cursor Session（SDK agentId 或 CLI chatId）→ 多轮 Prompt
 ```
 
 避免每次重新建立上下文。
@@ -436,20 +440,48 @@ Cursor 继续修 → 再次编译 → 直到成功
 | 11 | WebSocket 推送任务状态 | ✅ |
 | 12 | 布局直改（节点位置/换图） | ✅ |
 | 13 | 盘面 Tab（iframe symbolEditor → 写回 cfg） | ✅ |
-| 14 | 符号列表 + 换贴图/Spine MVP | ✅ |
+| 14 | Web 符号侧栏（换贴图/Spine） | ❌ 已关：符号改模板工程，保证唯一数据源 |
 | 15 | SE→PA runtime 同步脚本 | ✅ |
 
 ---
 
-## 18. 盘面 + 符号（直改通道）
+## 18. 盘面（直改通道）
 
 Workspace 除 Chat（AI 执行器）外，还有**直写工程**面板，不经 Cursor：
 
 | Tab | 预览 | 写回 |
 |-----|------|------|
 | **布局** | PA `previewUrl` + `?aiws_layout=1` | `MainUI.prefab` / 贴图覆盖 |
-| **盘面** | SE `boardPreviewUrl` + `?aiws_board=1` | `assets/resources/cfg/doc_example.json` |
-| **符号**（盘面侧栏） | 同上 | 覆盖 `symbol-library` 引用的贴图/Spine |
+| **盘面** | SE `boardPreviewUrl` + `?aiws_board=1` | 见下 |
+| **资源库** | harExplore 实时预览（粒子 Cocos Player / Spine 3.7·3.8） | 选中粒子/Spine/字体 → 拷入 PA `assets/resources/fx/harexplore/…` |
+
+### 外挂资源库（harExplore）
+
+- 配置：`config.json` / `AIWS_HAREXPLORE_DATA_ROOT` → `harExploreDataRoot`（默认 `D:/workspace/harExplore/dist/texture-viewer`）
+- Capability：`harexplore`
+- WS：`harexplore_catalog` / `harexplore_list` / `harexplore_merge`
+- 静态代理：`GET /harexplore-data/<rel>`（含 `particle-player/`、`spine37-player.html`、`vendor/`、资源包）
+- **实时预览**（与 harExplore viewer 同源播放器）：
+  - 粒子 → Cocos `particle-player` iframe + `postMessage({type:'particle', cmd:'load'})`
+  - Spine 3.7 → `spine37-player.html?skel&atlas&anim`
+  - Spine 3.8+ → 官方 `spine-player-3.8`（atlas 缺页走占位）
+  - 字体 → 贴图静态预览
+- MVP 合入：`particleAsset`（plist+贴图）、整包 Spine、字体目录；`particleComponent` 可预览，合入后仍需挂节点
+- **一键引用**：列表「引用」/工具栏「引用到 Chat」→ Composer 短链芯片；发送时展开强制契约（`subKind` / companion 贴图 / 禁静默跳过）
+- `particleComponent`：合入时自动拷同 tab `particleAsset` 贴图；引用芯片显示 `(+贴图timesParticle)` 并连带引用 companion
+- harExplore 本体仍用 `npm run serve`（8765）做 HAR 构建；AIWS 只读其构建产物
+
+**盘面按钮**
+
+| 操作 | WS | 效果 |
+|------|-----|------|
+| **写回 cfg** | `board_save` | 只写 PA `boardCfgRel` |
+| **合并进试玩** | `board_merge_pa` | 写 PA cfg → 镜像 SE presentation doc → SE `export-pack-for-ai`（用到的符号）→ **先删再加** 合并进 PA `assets/`（含扁平 `symbolLibraryRel`）→ refresh PA → commit |
+| **同步 runtime** | `board_sync_runtime` | SE→PA TS（保留 PA `.meta`） |
+
+合并替换语义：内容或 `.meta` 有差异时对目标文件 **unlink 再 copy**；上次合并记下的、本次包里没有的资源会按 `.ai-workspace/last-symbol-pack.json` **prune**。需 SE Creator 桥 `boardCocosmcpUrl`。
+
+**符号不在 Web 侧栏编辑。** `capabilities.symbol = false`。美术增删走模板工程；日常盘面进试玩走「合并进试玩」。
 
 ### 双工程配置（`ai-game-workspace/config.json`）
 
@@ -475,21 +507,11 @@ node ai-game-workspace/scripts/sync-se-runtime.mjs
 
 或盘面 Tab「同步 runtime」（WS `board_sync_runtime`）。复制 SE→PA 的 runtime 脚本，**保留 PA `.meta`**。
 
-### Symbol 美术包（按盘面）
+### 符号数据源
 
-AI 经 SE 桥静默导出「盘面用到的」符号依赖，再 merge 进 PA：
-
-1. `symbol-tools/export-pack-for-ai`（cocos-meta-mcp；Cursor skill `se-symbol-pack-export`）
-2. `node ai-game-workspace/scripts/merge-symbol-pack.mjs --pack <se>/temp/symbol-pack --pa <pa>`
-3. 或 WS `symbol_pack_merge`
-
-详见 SE `docs/SYMBOL-PACK-EXPORT.md`、[ADFRAME-COCOS-SETUP.md](./ADFRAME-COCOS-SETUP.md) §2.6.0。
-
-### 符号 MVP 边界
-
-- 列出 `symbol-library.prefab` 的 `SymbolEntry`
-- 可换贴图 / Spine（覆盖 uuid，复用 `asset_replace`）
-- **不做**：增删条目、改 anim 名、自定义 prefab、CellFx、预览墙（仍用 Creator）
+- **编辑同源**：SE 符号包（`spine-*/packs/<symbolGameId>/` 下 `symbol-library` + `asset-library`）+ 盘面刷子  
+- **进试玩**：`board_merge_pa` 按盘面裁剪导出并替换进 PA（非 Web 手改符号侧栏）；新包须带 `asset-library`，BoardStage 同时挂符号库+素材库  
+- Profile：`seBoardDocRel`、`symbolGameId`、`symbolLibraryRel`；`seRuntimeSync` 须含 `AssetDefs` / `AssetLibrary` / `SymbolResolve` / `GamePack` / `SpineZone`
 
 ### SE 嵌入桥
 
@@ -604,6 +626,8 @@ node ai-game-workspace/server.mjs --meta ai-game-workspace/data/aiws-data/worksp
 ```
 
 部署：**本机 AIWS**（见上文启动命令）。已放弃 Windows Sandbox 方案。
+
+**敏感配置 / Cocos·cursor 登录态：** 见 [`AIWS-SECRETS-AND-LOGIN.md`](./AIWS-SECRETS-AND-LOGIN.md)（统一 `config.local.json` → `secrets{}`）。
 
 ### F2 — 准备工作区（不开 Creator）
 
